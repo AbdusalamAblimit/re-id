@@ -11,5 +11,5 @@ docker build -t re-id .
 
 ```bash
 Copy code
-docker run -it --name re-id --gpus all re-id
+docker run -it --name re-id --gpus all --shm-size "8g" re-id
 ```

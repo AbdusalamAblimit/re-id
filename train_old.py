@@ -2,157 +2,203 @@
 
 
 import torch
-
+import torchvision
+from IPython import embed
 from data_manager import Market1501
 from dataset import ImageDataset
 from torchvision import transforms as T
 from torch.utils.data import DataLoader
 from model import ReID
 from tqdm import tqdm
+from torch import nn
 import numpy as np
+from loss import TripletHardLoss
 from samplers import   RandomIdentitySampler
+
+from pytorch_metric_learning import losses, miners, distances, reducers, testers
+from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
+from pytorch_metric_learning import samplers
+from loss import CenterLoss
 from torch.optim import lr_scheduler
-from loss import ReIdTotalLoss
-from trainsforms import RandomErasing
+
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark=True
+from loss import TripletHardLoss,CrossEntropyLabelSmooth
+
+
+from torch.utils.data.sampler import Sampler
 import random
+from collections import defaultdict
+
+
+
+
+import math
+import random
+
+class RandomErasing(object):
+    """ Randomly selects a rectangle region in an image and erases its pixels.
+        'Random Erasing Data Augmentation' by Zhong et al.
+        See https://arxiv.org/pdf/1708.04896.pdf
+    Args:
+         probability: The probability that the Random Erasing operation will be performed.
+         sl: Minimum proportion of erased area against input image.
+         sh: Maximum proportion of erased area against input image.
+         r1: Minimum aspect ratio of erased area.
+         mean: Erasing value.
+    """
+
+    def __init__(self, probability=0.5, sl=0.02, sh=0.4, r1=0.3, mean=(0.4914, 0.4822, 0.4465)):
+        self.probability = probability
+        self.mean = mean
+        self.sl = sl
+        self.sh = sh
+        self.r1 = r1
+
+    def __call__(self, img):
+
+        if random.uniform(0, 1) >= self.probability:
+            return img
+
+        for attempt in range(100):
+            area = img.size()[1] * img.size()[2]
+
+            target_area = random.uniform(self.sl, self.sh) * area
+            aspect_ratio = random.uniform(self.r1, 1 / self.r1)
+
+            h = int(round(math.sqrt(target_area * aspect_ratio)))
+            w = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if w < img.size()[2] and h < img.size()[1]:
+                x1 = random.randint(0, img.size()[1] - h)
+                y1 = random.randint(0, img.size()[2] - w)
+                if img.size()[0] == 3:
+                    img[0, x1:x1 + h, y1:y1 + w] = self.mean[0]
+                    img[1, x1:x1 + h, y1:y1 + w] = self.mean[1]
+                    img[2, x1:x1 + h, y1:y1 + w] = self.mean[2]
+                else:
+                    img[0, x1:x1 + h, y1:y1 + w] = self.mean[0]
+                return img
+
+        return img
+
+
+
+
+width = 128
+height = 256
+max_epochs = 300
+transform_train = T.Compose([
+    T.Resize([256,128]),
+    T.Pad(10),
+    T.RandomCrop([height,width]),
+    T.RandomHorizontalFlip(p=0.5),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
+    RandomErasing(probability=0.5,mean=[0.485,0.456,0.406])
+])
+
+
+transform_test = T.Compose([
+    T.Resize([height, width]),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225])
+])
+
+data = Market1501()
+
+train_dataset = ImageDataset(data.train, transform=transform_train)
+query_dataset = ImageDataset(data.query, transform=transform_test)
+gallery_dataset = ImageDataset(data.gallery, transform=transform_test)
+
+query_loader = DataLoader(query_dataset, batch_size=16, shuffle=False,num_workers=8)
+gallery_loader = DataLoader(gallery_dataset, batch_size=16, shuffle=False,num_workers=8)
+
+# PK sampling
+P = 8
+K = 8
+train_dataset = ImageDataset(data.train,transform=transform_train)
+sampler = RandomIdentitySampler(data.train, num_instances=K)
+train_loader = DataLoader(train_dataset, batch_size=P*K, sampler=sampler, num_workers=8)
+
 
 def main(cfg):
 
-    torch.manual_seed(cfg.random_seed)  # cpu种子
-    torch.cuda.manual_seed_all(cfg.random_seed)  # 所有可用GPU的种子
-    np.random.seed(cfg.random_seed)
-    random.seed(cfg.random_seed)
-
-    width = cfg.width
-    height = cfg.height
-
-    transform_train = T.Compose([
-        T.Resize([height,width]),
-        T.Pad(10),
-        T.RandomCrop([height,width]),
-        T.RandomHorizontalFlip(p=0.5),
-        T.ToTensor(),
-        T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
-        RandomErasing(probability=0.5,mean=[0.485,0.456,0.406])
-    ])
 
 
-    transform_test = T.Compose([
-        T.Resize([height, width]),
-        T.ToTensor(),
-        T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225])
-    ])
+    # criterion = nn.CrossEntropyLoss()
+    criterion = CrossEntropyLabelSmooth(data.train_num_pids,0.1,True)
+    triplet_loss = TripletHardLoss(0.3)
+    center_loss = CenterLoss(data.train_num_imgs, 2048,True)
+    center_loss_weight = 0.001
+    # 优化器
 
-
-    if cfg.dataset == 'Market1501':
-        data = Market1501()
-
-    train_dataset = ImageDataset(data.train, transform=transform_train)
-    query_dataset = ImageDataset(data.query, transform=transform_test)
-    gallery_dataset = ImageDataset(data.gallery, transform=transform_test)
-
-    # PK sampling
-    P = cfg.train.batch.p
-    K = cfg.train.batch.k
-
-    train_dataset = ImageDataset(data.train, transform = transform_train)
-    sampler = RandomIdentitySampler(data.train, num_instances = K)
-    train_loader = DataLoader(train_dataset, batch_size = P*K, sampler = sampler, 
-                              num_workers = cfg.train.num_workers, pin_memory = cfg.train.pin_memory)
+    model = ReID(num_classes=data.train_num_pids,neck = 'bnneck')
+    # criterion = TripletHardLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.00035)
+    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[40, 70, 130,170], gamma=0.1)
     
-    query_loader = DataLoader(query_dataset,  shuffle=False, batch_size = cfg.test.batch_size,
-                              num_workers = cfg.test.num_workers, pin_memory = cfg.test.pin_memory)
-    
-    gallery_loader = DataLoader(gallery_dataset, batch_size = cfg.test.batch_size, shuffle = False,
-                                num_workers = cfg.test.num_workers, pin_memory = cfg.test.pin_memory)
-
-    loss_func = ReIdTotalLoss(cfg)
-    model = ReID(cfg)
-    lr_cfg = cfg.train.lr_scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr)
-    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones = lr_cfg.milestones, gamma = lr_cfg.gamma)
-
-    device = 'cuda:0' if cfg.use_gpu else 'cpu'
-
-    if device == 'cuda:0':
-        torch.backends.cudnn.enabled = True
-        torch.backends.cudnn.benchmark=True
-        torch.backends.cudnn.deterministic = True
-
+    device = 'cuda:0'
     model = model.to(device)
-    train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg)
+    # test(model,query_loader,gallery_loader,True,[1,3,5,10,20])
+    # evaluate(model,device)
+    train(model,criterion,triplet_loss,center_loss,center_loss_weight,optimizer,scheduler,max_epochs,device,evaluate_on_n_epochs=10)
     # embed()
     pass
 
 
 
-def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg):
-    start_epoch = cfg.train.start_epoch
-    max_epochs = cfg.train.max_epochs
-    evaluate_on_n_epochs = cfg.train.eval_on_n_epochs
+def train(model,criterion, triplet_loss, center_loss,center_loss_weight , optimizer,scheduler, max_epochs,device = 'cuda:0', evaluate_on_n_epochs=5):
 
-    warmup = cfg.train.warmup
-
-    if warmup.enabled:
-        warmup.lr_growth = (cfg.train.lr_scheduler.init_lr - warmup.init_lr) / warmup.iters
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = warmup.init_lr
-
-    for epoch in range(start_epoch, max_epochs):
+    for epoch in range(max_epochs):
         model.train()
         epoch += 1
         pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}")
-        loss_sums = {}  # 初始化损失累加字典
+        total_loss = 0.0
+        total_id_loss = 0.0
+        total_tri_loss = 0.0
+        total_ct_loss = 0.0
         total_running_correct_samples = 0
         total_samples = 0
-
         for i,data in pbar:
             imgs,pids,camids = data
             imgs = imgs.to(device)
             pids = pids.to(device)
             outputs,features = model(imgs)
 
-            loss,loss_dict = loss_func(outputs, features, None, pids)
+            id_loss = criterion(outputs, pids)
+            tri_loss = triplet_loss(features, pids)
+            ct_loss = center_loss_weight * center_loss(features,pids)
+            loss = id_loss + tri_loss + ct_loss
 
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # embed()
-
-
-
-            if i == 0:
-                for key in loss_dict.keys():
-                    loss_sums[key] = 0.0
-
-            # 累加每种损失和总损失
-            for key, value in loss_dict.items():
-                loss_sums[key] += value
             
-            # compute rank-1 by id
-            _, predicted = torch.max(outputs,1) 
+
+            _, predicted = torch.max(outputs,1)  # 获取预测的样本号码
+            
             total_running_correct_samples += (predicted == pids).sum().item()
             total_samples += pids.shape[0]
+            total_loss += loss.item()
+            total_id_loss += id_loss.item()
+            total_tri_loss += tri_loss.item()
+            total_ct_loss += ct_loss.item()
             current_lr = optimizer.param_groups[0]['lr']
 
-            # create pbar information
-            postfix_dict = {
-                'acc': total_running_correct_samples / total_samples,
-                'lr': current_lr,
-            }
-
-            # update pbar information
-            postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
-
-            pbar.set_postfix(postfix_dict)
-
-        if warmup.enabled and epoch <= warmup.iters:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] += warmup.lr_growth
+            pbar.set_postfix({
+                              'acc': total_running_correct_samples/total_samples,
+                              'id_loss': total_id_loss/(i+1),
+                              'tri_loss':total_tri_loss/(i+1),
+                              'ct_loss': total_ct_loss/(i+1),
+                              'loss' : total_loss/(i+1),
+                              'lr': current_lr,
+                              })
         scheduler.step()
 
         if epoch % evaluate_on_n_epochs == 0:
+            # evaluate(model,device)
             test(model,query_loader,gallery_loader,True,[1,3,5,10,20])
 
 

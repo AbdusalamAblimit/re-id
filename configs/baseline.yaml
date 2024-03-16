@@ -1,0 +1,67 @@
+model:
+  _global:
+    feature_dim: 2048
+    neck: bnneck
+  local:
+    hrnet:
+      enabel: true
+      lock: true
+    
+
+dataset: 'Market1501'
+
+
+random_seed: 42
+
+width: 128
+height: 256 
+
+train:
+  num_classes: 751
+  batch:
+    p: 8
+    k: 8
+  start_epoch: 0
+  max_epochs: 150
+  loss:
+    metric:
+      enabled: true
+      loss_func: triplet-hard # triplet, triplet-hard
+      weight: 1.0
+      margin: 0.3
+    id:
+      enabled: true
+      loss_func: cross-entropy-label-smooth # cross-entropy-label-smooth, cross-entropy
+      weight: 1.0
+      epsilon: 0.1 # available when using cross-entropy-label-smooth
+    center:
+      enabled: true
+      weight: 0.001
+
+  pin_memory: true
+  num_workers: 16
+
+  eval_on_n_epochs: 10
+
+  
+  warmup:
+    enabled: true
+    iters: 10
+    init_lr: 0.0000035 
+  lr_scheduler:  # MultiStepLR
+    init_lr: 0.00035
+    milestones: [40, 70, 100]
+    gamma: 0.1
+  
+  
+test:
+  pin_memory: true
+  num_workers: 16
+  batch_size: 64
+
+
+use_gpu: true
+
+name: baseline
+
+output_dir: outputs
