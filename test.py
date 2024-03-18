@@ -389,7 +389,7 @@ def test(model, queryloader, galleryloader,cfg):
         q_pids = np.asarray(q_pids)
         q_camids = np.asarray(q_camids)
 
-        logger.info(f'Extracted {len(qf)} features for {len(q_pids)} people.')
+        logger.info(f'Extracted {len(qf)} features for {len(set(q_pids))} people in query set.')
 
         gf, g_pids, g_camids, lgf = [], [], [], []
 
@@ -409,7 +409,7 @@ def test(model, queryloader, galleryloader,cfg):
         g_pids = np.asarray(g_pids)
         g_camids = np.asarray(g_camids)
 
-
+        logger.info(f'Extracted {len(gf)} features for {len(set(g_pids))} people in gallery set.')
 
     # feature normlization
     qf = 1. * qf / (torch.norm(qf, 2, dim = -1, keepdim=True).expand_as(qf) + 1e-12)
