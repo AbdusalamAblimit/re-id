@@ -15,6 +15,7 @@ from torch.optim import lr_scheduler
 from loss import ReIdTotalLoss
 from trainsforms import RandomErasing
 import random
+from IPython import embed
 
 def main(cfg):
 
@@ -74,17 +75,19 @@ def main(cfg):
 
     device = 'cuda:0' if cfg.use_gpu else 'cpu'
 
-    if device == 'cuda:0':
+    if device == 'cuda:0' and cfg.use_cudnn:
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark=True
         torch.backends.cudnn.deterministic = True
 
     model = model.to(device)
+    # test(model,query_loader,gallery_loader,cfg)
+    # embed()
     train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg)
     # embed()
     pass
 
-
+from test import test
 
 def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg):
     start_epoch = cfg.train.start_epoch
@@ -110,9 +113,9 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             imgs,pids,camids = data
             imgs = imgs.to(device)
             pids = pids.to(device)
-            outputs,features = model(imgs)
+            outputs,global_features,local_features = model(imgs)
 
-            loss,loss_dict = loss_func(outputs, features, None, pids)
+            loss,loss_dict = loss_func(outputs, global_features, local_features, pids)
 
 
             optimizer.zero_grad()
@@ -153,7 +156,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
         scheduler.step()
 
         if epoch % evaluate_on_n_epochs == 0:
-            test(model,query_loader,gallery_loader,True,[1,3,5,10,20])
+            test(model,query_loader,gallery_loader,cfg)
 
 
 
@@ -210,7 +213,7 @@ def evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, max_rank):
 
 
 
-def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
+def test_t(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
     model.eval()
 
     with torch.no_grad():

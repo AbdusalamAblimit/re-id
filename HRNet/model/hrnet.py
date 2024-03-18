@@ -1,5 +1,5 @@
 import torch.nn as nn
-
+from IPython import embed
 BN_MOMENTUM = 0.1
 
 
@@ -246,6 +246,7 @@ class HighResolutionNet(nn.Module):
         self.final_layer = nn.Conv2d(base_channel, num_joints, kernel_size=1, stride=1)
 
     def forward(self, x):
+        # embed()
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
