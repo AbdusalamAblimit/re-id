@@ -16,8 +16,38 @@ from loss import ReIdTotalLoss
 from trainsforms import RandomErasing
 import random
 from IPython import embed
+import os
+import time
+from loguru import logger
 
 def main(cfg):
+
+    if not os.path.exists(cfg.output_root_dir):
+        os.mkdir(cfg.output_root_dir)
+    time_now = time.strftime("%Y%m%d%H%M%S", time.localtime())
+    cfg.output_dir = os.path.join(cfg.output_root_dir,cfg.name,time_now)
+    if not os.path.exists(os.path.join(cfg.output_root_dir,cfg.name)):
+         os.mkdir(os.path.join(cfg.output_root_dir,cfg.name))
+    if not os.path.exists(cfg.output_dir):
+        os.mkdir(cfg.output_dir)
+    
+    logger.remove()
+    logger.add(lambda msg: tqdm.write(msg, end=""))
+    logger.add(
+        sink=os.path.join(cfg.output_dir, 'training.log'),
+        level='INFO',     
+        encoding='utf-8',  
+        enqueue=True,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+    )
+    logger.add(
+        sink=os.path.join(cfg.output_dir, 'warning-error.log'),
+        level='WARNING',     
+        encoding='utf-8',  
+        enqueue=True,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+    )
+
 
     torch.manual_seed(cfg.random_seed)  # cpu种子
     torch.cuda.manual_seed_all(cfg.random_seed)  # 所有可用GPU的种子
@@ -66,6 +96,13 @@ def main(cfg):
     
     gallery_loader = DataLoader(gallery_dataset, batch_size = cfg.test.batch_size, shuffle = False,
                                 num_workers = cfg.test.num_workers, pin_memory = cfg.test.pin_memory)
+
+    if cfg.model.aligned and cfg.train.loss.metric.loss_func != 'triplet-hard-aligned-reid':
+        logger.warning(f'You can only use TripletHardAlignedReid as loss function when training is aligned. Metric loss function has been replaced with TripletHardAlignedReid.')
+        cfg.train.loss.metric.loss_func = 'triplet-hard-aligned-reid'
+    elif (not cfg.model.aligned) and  cfg.train.loss.metric.loss_func == 'triplet-hard-aligned-reid':
+        logger.warning(f'You can not use TripletHardAlignedReid as metric loss function when training is not aligned.Metric loss function has been replaced with TripletHard.')
+        cfg.train.loss.metric.loss_func = 'triplet-hard'
 
     loss_func = ReIdTotalLoss(cfg)
     model = ReID(cfg)
@@ -123,8 +160,6 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             optimizer.step()
             # embed()
 
-
-
             if i == 0:
                 for key in loss_dict.keys():
                     loss_sums[key] = 0.0
@@ -149,7 +184,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
 
             pbar.set_postfix(postfix_dict)
-
+        logger.info(f'{pbar.desc}: {len(pbar)} iterations. {pbar.postfix}')
         if warmup.enabled and epoch <= warmup.iters:
             for param_group in optimizer.param_groups:
                 param_group['lr'] += warmup.lr_growth
@@ -168,7 +203,7 @@ def evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, max_rank):
     num_q, num_g = distmat.shape
     if num_g < max_rank:
         max_rank = num_g
-        print("Note: number of gallery samples is quite small, got {}".format(num_g))
+        logger.info("Note: number of gallery samples is quite small, got {}".format(num_g))
     indices = np.argsort(distmat, axis=1)
     matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
 
@@ -234,7 +269,7 @@ def test_t(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
         q_pids = np.asarray(q_pids)
         q_camids = np.asarray(q_camids)
 
-        # print("Extracted features for query set, obtained {}-by-{} matrix".format(qf.size(0), qf.size(1)))
+        # logger.info("Extracted features for query set, obtained {}-by-{} matrix".format(qf.size(0), qf.size(1)))
 
         gf, g_pids, g_camids = [], [], []
 
@@ -257,7 +292,7 @@ def test_t(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
         g_camids = np.asarray(g_camids)
 
 
-        # print("Extracted features for gallery set, obtained {}-by-{} matrix".format(gf.size(0), gf.size(1)))
+        # logger.info("Extracted features for gallery set, obtained {}-by-{} matrix".format(gf.size(0), gf.size(1)))
 
 
     # feature normlization
@@ -272,12 +307,12 @@ def test_t(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
 
     cmc,mAP= evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, 20)
 
-    print("Results ----------")
-    print("mAP: {:.1%}".format(mAP))
-    print("CMC curve")
+    logger.info("Results ----------")
+    logger.info("mAP: {:.1%}".format(mAP))
+    logger.info("CMC curve")
     for r in ranks:
-        print("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-    print("------------------")
+        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+    logger.info("------------------")
     return cmc[0]
 
 
@@ -299,7 +334,7 @@ def load_config(args):
     config = to_namespace(config)
     if args.use_gpu: config.use_gpu = True
     if args.use_cpu: config.use_gpu = False
-    if args.output_dir: config.output_dir = args.output_dir
+    if args.output_root_dir: config.output_root_dir = args.output_root_dir
     if args.name: config.name = args.name
     if args.max_epochs: config.max_epochs = args.max_epochs
     config.resume = args.resume
@@ -314,7 +349,7 @@ def parse_args():
     parser.add_argument('--config', type=str, default='configs/baseline.yaml', help='Path to the configuration file.')
     parser.add_argument("--use-gpu", action="store_true")
     parser.add_argument("--use-cpu", action="store_true")
-    parser.add_argument('--output-dir', help='Directory where output files will be saved.')
+    parser.add_argument('--output-root-dir', help='Root directory where output files will be saved.')
     parser.add_argument('--name', help='Subdirectory name for saving output. The final output path will be {output-dir}/{name}/yyyy-MM-dd-HH-mm-ss.')
     parser.add_argument('--resume', type=str, help='resume from checkpoint')
     parser.add_argument('--max-epochs', type=int, help='number of total epochs to run')

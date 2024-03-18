@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from IPython import embed
 from HRNet.model.hrnet import HighResolutionNet
 from torchvision.models.resnet import resnet50, resnet34, resnet18
-
+from loguru import logger
 
 
 def weights_init_kaiming(m):
@@ -98,7 +98,7 @@ class LocalFeatureExtractor(nn.Module):
                         del weights_dict[k]
             missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
             if len(missing_keys) != 0:
-                print("missing_keys: ", missing_keys)
+                logger.info("missing_keys: ", missing_keys)
 
         if hrnet_cfg.lock:
             for param in model.parameters():
@@ -206,22 +206,22 @@ if __name__ == '__main__':
     # res = ModifiedResNet34(3,17)
     # embed()
     model(a)
-    print('end')
+    logger.info('end')
     
 # import torch
 # import torchvision.models as models
 
-# def print_resnet50_layers_output_size():
+# def logger.info_resnet50_layers_output_size():
 #     net = models.resnet50(pretrained=True)  # 加载预训练的ResNet50模型
 #     x = torch.randn(1, 3, 256, 192)  # 假设的输入尺寸，这里为[batch_size, channels, height, width]
 
-#     print("Input size:", x.size())
+#     logger.info("Input size:", x.size())
 
 #     for name, layer in net.named_children():
 #         x = layer(x)
-#         print(f"{name}: {x.size()}")
+#         logger.info(f"{name}: {x.size()}")
 
 # # 调用函数查看每层输出尺寸
-# print_resnet50_layers_output_size()
+# logger.info_resnet50_layers_output_size()
 
 

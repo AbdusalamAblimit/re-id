@@ -9,7 +9,7 @@ model:
         enabled: true
         path: HRNet/pose_hrnet_w32_256x192.pth
       num_joints: 17
-  aligned: true
+  aligned: false
 
     
 
@@ -72,4 +72,4 @@ use_cudnn: true
 
 name: baseline
 
-output_dir: outputs
+output_root_dir: outputs

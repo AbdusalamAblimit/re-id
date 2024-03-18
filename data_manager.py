@@ -2,6 +2,7 @@ import os
 import glob
 from IPython import embed 
 import re
+from loguru import logger
 class Market1501():
     """
     """
@@ -19,17 +20,17 @@ class Market1501():
         total_num_pids = trian_num_pids + query_num_pids + gallery_num_pids
         total_num_imgs = train_num_imgs + query_num_imgs + gallery_num_imgs
         
-        print("\n\n\n => Market1501 loaded\n")
-        print("--------------------------------------")
-        print("  subset  |  ids | images | relabeled")
-        print("--------------------------------------")
-        print("  train   |{:5d} |{:8d}|   {}  ".format(trian_num_pids,train_num_imgs,train_relabeled))
-        print("  query   |{:5d} |{:8d}|   {} ".format(query_num_pids,query_num_imgs,query_relabeled))
-        print("  gallery |{:5d} |{:8d}|   {} ".format(gallery_num_pids,gallery_num_imgs,gallery_relabeled))
-        print("--------------------------------------")
-        print("  total   |{:5d} |{:8d}|     - ".format(total_num_pids,total_num_imgs))
-        print("--------------------------------------")
-        print('\n\n')
+        logger.info("\n\n\n => Market1501 loaded\n")
+        logger.info("--------------------------------------")
+        logger.info("  subset  |  ids | images | relabeled")
+        logger.info("--------------------------------------")
+        logger.info("  train   |{:5d} |{:8d}|   {}  ".format(trian_num_pids,train_num_imgs,train_relabeled))
+        logger.info("  query   |{:5d} |{:8d}|   {} ".format(query_num_pids,query_num_imgs,query_relabeled))
+        logger.info("  gallery |{:5d} |{:8d}|   {} ".format(gallery_num_pids,gallery_num_imgs,gallery_relabeled))
+        logger.info("--------------------------------------")
+        logger.info("  total   |{:5d} |{:8d}|     - ".format(total_num_pids,total_num_imgs))
+        logger.info("--------------------------------------")
+        logger.info('\n\n')
 
 
         self.train, self.query, self.gallery = train, query, gallery

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import torch.backends.cudnn as cudnn
 from torch.optim import lr_scheduler
 from tqdm import tqdm
-
+from loguru import logger
 
 from IPython import embed
 
@@ -24,7 +24,7 @@ def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only
         original_dist = local_distmat
     else:
         feat = torch.cat([probFea,galFea])
-        print('using GPU to compute original distance')
+        logger.info('using GPU to compute original distance')
         distmat = torch.pow(feat,2).sum(dim=1, keepdim=True).expand(all_num,all_num) + \
                       torch.pow(feat, 2).sum(dim=1, keepdim=True).expand(all_num, all_num).t()
         distmat.addmm_(1,-2,feat,feat.t())
@@ -37,7 +37,7 @@ def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only
     V = np.zeros_like(original_dist).astype(np.float16)
     initial_rank = np.argsort(original_dist).astype(np.int32)
 
-    print('starting re_ranking')
+    logger.info('starting re_ranking')
     for i in range(all_num):
         # k-reciprocal neighbors
         forward_k_neigh_index = initial_rank[i, :k1 + 1]
@@ -266,7 +266,7 @@ def low_memory_matrix_op(
     y_split_axis: The axis to split y into parts
     x_num_splits: number of splits. 1 <= x_num_splits <= M
     y_num_splits: number of splits. 1 <= y_num_splits <= N
-    verbose: whether to print the progress
+    verbose: whether to logger.info the progress
 
   Returns:
     mat: numpy array, shape [M, N]
@@ -275,7 +275,7 @@ def low_memory_matrix_op(
     if verbose:
         import sys
         import time
-        printed = False
+        logger.infoed = False
         st = time.time()
         last_time = time.time()
 
@@ -288,12 +288,12 @@ def low_memory_matrix_op(
             mat[i].append(part_mat)
 
             if verbose:
-                if not printed:
-                    printed = True
+                if not logger.infoed:
+                    logger.infoed = True
                 else:
                     # Clean the current line
                     sys.stdout.write("\033[F\033[K")
-                print('Matrix part ({}, {}) / ({}, {}), +{:.2f}s, total {:.2f}s'
+                logger.info('Matrix part ({}, {}) / ({}, {}), +{:.2f}s, total {:.2f}s'
                     .format(i + 1, j + 1, x_num_splits, y_num_splits,
                             time.time() - last_time, time.time() - st))
                 last_time = time.time()
@@ -302,7 +302,7 @@ def low_memory_matrix_op(
     return mat
 
 def low_memory_local_dist(x, y, aligned=True):
-    print('Computing local distance...')
+    logger.info('Computing local distance...')
     x_num_splits = int(len(x) / 200) + 1
     y_num_splits = int(len(y) / 200) + 1
     z = low_memory_matrix_op(local_dist, x, y, 0, 0, x_num_splits, y_num_splits, verbose=True, aligned=aligned)
@@ -316,7 +316,7 @@ def evaluate(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
     num_q, num_g = distmat.shape
     if num_g < max_rank:
         max_rank = num_g
-        print("Note: number of gallery samples is quite small, got {}".format(num_g))
+        logger.info("Note: number of gallery samples is quite small, got {}".format(num_g))
     indices = np.argsort(distmat, axis=1)
     matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
 
@@ -374,7 +374,7 @@ def test(model, queryloader, galleryloader,cfg):
         for batch_idx, (imgs, pids, camids) in tqdm(enumerate(queryloader),total=len(queryloader),desc='Extracting features for query set'):
             if cfg.use_gpu: imgs = imgs.cuda()
 
-            end = time.time()
+
             features, local_features = model(imgs)
 
 
@@ -389,14 +389,14 @@ def test(model, queryloader, galleryloader,cfg):
         q_pids = np.asarray(q_pids)
         q_camids = np.asarray(q_camids)
 
+        logger.info(f'Extracted {len(qf)} features for {len(q_pids)} people.')
+
         gf, g_pids, g_camids, lgf = [], [], [], []
-        end = time.time()
+
         for batch_idx, (imgs, pids, camids) in tqdm(enumerate(galleryloader),total=len(galleryloader),desc='Extracting features for gallery set'):
             if cfg.use_gpu: imgs = imgs.cuda()
 
-            end = time.time()
             features, local_features = model(imgs)
-
 
             features = features.data.cpu()
             local_features = local_features.data.cpu()
@@ -421,30 +421,30 @@ def test(model, queryloader, galleryloader,cfg):
     distmat = distmat.numpy()
 
     if not cfg.test.distance== 'global':
-        # print("Only using global branch")
+        # logger.info("Only using global branch")
 
         lqf = lqf.permute(0,2,1)
         lgf = lgf.permute(0,2,1)
         local_distmat = low_memory_local_dist(lqf.numpy(),lgf.numpy(), aligned= cfg.model.aligned)
         if cfg.test.distance== 'local':
-            # print("Only using local branch")
+            # logger.info("Only using local branch")
             distmat = local_distmat
         if cfg.test.distance == 'global_local':
-            # print("Using global and local branches")
+            # logger.info("Using global and local branches")
             distmat = local_distmat+distmat
-    print("Computing CMC and mAP")
+    logger.info("Computing CMC and mAP")
     cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
 
-    print("Results ----------")
-    print("mAP: {:.1%}".format(mAP))
-    print("CMC curve")
+    logger.info("Results ----------")
+    logger.info("mAP: {:.1%}".format(mAP))
+    logger.info("CMC curve")
     for r in cfg.test.ranks:
-        print("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-    print("------------------")
+        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+    logger.info("------------------")
 
     if cfg.test.reranking:
         if cfg.test.distance == 'global':
-            print("Only using global branch for reranking")
+            logger.info("Only using global branch for reranking")
             distmat = re_ranking(qf,gf,k1=20, k2=6, lambda_value=0.3)
         else:
             local_qq_distmat = low_memory_local_dist(lqf.numpy(), lqf.numpy(),aligned= cfg.model.aligned)
@@ -454,18 +454,18 @@ def test(model, queryloader, galleryloader,cfg):
                  np.concatenate([local_distmat.T, local_gg_distmat], axis=1)],
                 axis=0)
             if cfg.test.distance == 'local':
-                print("Only using local branch for reranking")
+                logger.info("Only using local branch for reranking")
                 distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=True)
             elif cfg.test.distance == 'global_local':
-                print("Using global and local branches for reranking")
+                logger.info("Using global and local branches for reranking")
                 distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=False)
-        print("Computing CMC and mAP for re_ranking")
+        logger.info("Computing CMC and mAP for re_ranking")
         cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
 
-        print("Results ----------")
-        print("mAP(RK): {:.1%}".format(mAP))
-        print("CMC curve(RK)")
+        logger.info("Results ----------")
+        logger.info("mAP(RK): {:.1%}".format(mAP))
+        logger.info("CMC curve(RK)")
         for r in cfg.test.ranks:
-            print("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-        print("------------------")
+            logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+        logger.info("------------------")
     return cmc[0]

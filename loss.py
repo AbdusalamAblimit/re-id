@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from IPython import embed
-
+from loguru import logger
 # class TripletHardLoss(nn.Module):
 #     def __init__(self, margin=0.3):
 #         super(TripletHardLoss, self).__init__()

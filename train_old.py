@@ -211,7 +211,7 @@ def evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, max_rank):
     num_q, num_g = distmat.shape
     if num_g < max_rank:
         max_rank = num_g
-        print("Note: number of gallery samples is quite small, got {}".format(num_g))
+        logger.info("Note: number of gallery samples is quite small, got {}".format(num_g))
     indices = np.argsort(distmat, axis=1)
     matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
 
@@ -277,7 +277,7 @@ def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
         q_pids = np.asarray(q_pids)
         q_camids = np.asarray(q_camids)
 
-        # print("Extracted features for query set, obtained {}-by-{} matrix".format(qf.size(0), qf.size(1)))
+        # logger.info("Extracted features for query set, obtained {}-by-{} matrix".format(qf.size(0), qf.size(1)))
 
         gf, g_pids, g_camids = [], [], []
 
@@ -300,7 +300,7 @@ def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
         g_camids = np.asarray(g_camids)
 
 
-        # print("Extracted features for gallery set, obtained {}-by-{} matrix".format(gf.size(0), gf.size(1)))
+        # logger.info("Extracted features for gallery set, obtained {}-by-{} matrix".format(gf.size(0), gf.size(1)))
 
 
     # feature normlization
@@ -315,12 +315,12 @@ def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
 
     cmc,mAP= evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, 20)
 
-    print("Results ----------")
-    print("mAP: {:.1%}".format(mAP))
-    print("CMC curve")
+    logger.info("Results ----------")
+    logger.info("mAP: {:.1%}".format(mAP))
+    logger.info("CMC curve")
     for r in ranks:
-        print("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-    print("------------------")
+        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+    logger.info("------------------")
     return cmc[0]
 
 
