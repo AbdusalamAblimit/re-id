@@ -19,18 +19,17 @@ from IPython import embed
 import os
 import time
 from loguru import logger
+import shutil
 
 def main(cfg):
 
-    if not os.path.exists(cfg.output_root_dir):
-        os.mkdir(cfg.output_root_dir)
+    os.makedirs(cfg.output_root_dir,exist_ok=True)
     time_now = time.strftime("%Y%m%d%H%M%S", time.localtime())
     cfg.output_dir = os.path.join(cfg.output_root_dir,cfg.name,time_now)
-    if not os.path.exists(os.path.join(cfg.output_root_dir,cfg.name)):
-         os.mkdir(os.path.join(cfg.output_root_dir,cfg.name))
-    if not os.path.exists(cfg.output_dir):
-        os.mkdir(cfg.output_dir)
-    
+    os.makedirs(os.path.join(cfg.output_root_dir,cfg.name),exist_ok=True)
+    os.makedirs(cfg.output_dir,exist_ok=True)
+    shutil.copyfile(cfg.config_file, os.path.join(cfg.output_dir,'config.yaml'))
+
     logger.remove()
     logger.add(lambda msg: tqdm.write(msg, end=""))
     logger.add(
@@ -126,6 +125,9 @@ def main(cfg):
 
 from test import test
 
+
+
+
 def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg):
     start_epoch = cfg.train.start_epoch
     max_epochs = cfg.train.max_epochs
@@ -137,183 +139,74 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
         warmup.lr_growth = (cfg.train.lr_scheduler.init_lr - warmup.init_lr) / warmup.iters
         for param_group in optimizer.param_groups:
             param_group['lr'] = warmup.init_lr
+    try:
+        for epoch in range(start_epoch, max_epochs):
+            model.train()
+            epoch += 1
+            pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}")
+            loss_sums = {}  # 初始化损失累加字典
+            total_running_correct_samples = 0
+            total_samples = 0
 
-    for epoch in range(start_epoch, max_epochs):
-        model.train()
-        epoch += 1
-        pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}")
-        loss_sums = {}  # 初始化损失累加字典
-        total_running_correct_samples = 0
-        total_samples = 0
+            for i,data in pbar:
+                imgs,pids,camids = data
+                imgs = imgs.to(device)
+                pids = pids.to(device)
+                outputs,global_features,local_features = model(imgs)
 
-        for i,data in pbar:
-            imgs,pids,camids = data
-            imgs = imgs.to(device)
-            pids = pids.to(device)
-            outputs,global_features,local_features = model(imgs)
-
-            loss,loss_dict = loss_func(outputs, global_features, local_features, pids)
-
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            # embed()
-
-            if i == 0:
-                for key in loss_dict.keys():
-                    loss_sums[key] = 0.0
-
-            # 累加每种损失和总损失
-            for key, value in loss_dict.items():
-                loss_sums[key] += value
-            
-            # compute rank-1 by id
-            _, predicted = torch.max(outputs,1) 
-            total_running_correct_samples += (predicted == pids).sum().item()
-            total_samples += pids.shape[0]
-            current_lr = optimizer.param_groups[0]['lr']
-
-            # create pbar information
-            postfix_dict = {
-                'acc': total_running_correct_samples / total_samples,
-                'lr': current_lr,
-            }
-
-            # update pbar information
-            postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
-
-            pbar.set_postfix(postfix_dict)
-        logger.info(f'{pbar.desc}: {len(pbar)} iterations. {pbar.postfix}')
-        if warmup.enabled and epoch <= warmup.iters:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] += warmup.lr_growth
-        scheduler.step()
-
-        if epoch % evaluate_on_n_epochs == 0:
-            test(model,query_loader,gallery_loader,cfg)
+                loss,loss_dict = loss_func(outputs, global_features, local_features, pids)
 
 
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                # embed()
 
+                if i == 0:
+                    for key in loss_dict.keys():
+                        loss_sums[key] = 0.0
 
-def evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, max_rank):
-    """Evaluation with market1501 metric
-    Key: for each query identity, its gallery images from the same camera view are discarded.
-    """
-    num_q, num_g = distmat.shape
-    if num_g < max_rank:
-        max_rank = num_g
-        logger.info("Note: number of gallery samples is quite small, got {}".format(num_g))
-    indices = np.argsort(distmat, axis=1)
-    matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
+                # 累加每种损失和总损失
+                for key, value in loss_dict.items():
+                    loss_sums[key] += value
+                
+                # compute rank-1 by id
+                _, predicted = torch.max(outputs,1) 
+                total_running_correct_samples += (predicted == pids).sum().item()
+                total_samples += pids.shape[0]
+                current_lr = optimizer.param_groups[0]['lr']
 
-    # compute cmc curve for each query
-    all_cmc = []
-    all_AP = []
-    num_valid_q = 0. # number of valid query
-    for q_idx in tqdm(range(num_q),'Evaluating:'):
-        # get query pid and camid
-        q_pid = q_pids[q_idx]
-        q_camid = q_camids[q_idx]
+                # create pbar information
+                postfix_dict = {
+                    'acc': total_running_correct_samples / total_samples,
+                    'lr': current_lr,
+                }
 
-        # remove gallery samples that have the same pid and camid with query
-        order = indices[q_idx]
-        remove = (g_pids[order] == q_pid) & (g_camids[order] == q_camid)
-        keep = np.invert(remove)
+                # update pbar information
+                postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
 
-        # compute cmc curve
-        orig_cmc = matches[q_idx][keep] # binary vector, positions with value 1 are correct matches
-        if not np.any(orig_cmc):
-            # this condition is true when query identity does not appear in gallery
-            continue
+                pbar.set_postfix(postfix_dict)
+            logger.info(f'{pbar.desc}: {len(pbar)} iterations. {pbar.postfix}')
+            if warmup.enabled and epoch <= warmup.iters:
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] += warmup.lr_growth
+            scheduler.step()
 
-        cmc = orig_cmc.cumsum()
-        cmc[cmc > 1] = 1
+            if epoch % evaluate_on_n_epochs == 0:
+                test(model,query_loader,gallery_loader,cfg)
+    except KeyboardInterrupt:
+        logger.error('Catched KeyboardInterrupt. Saving trained model...')
 
-        all_cmc.append(cmc[:max_rank])
-        num_valid_q += 1.
-
-        # compute average precision
-        # reference: https://en.wikipedia.org/wiki/Evaluation_measures_(information_retrieval)#Average_precision
-        num_rel = orig_cmc.sum()
-        tmp_cmc = orig_cmc.cumsum()
-        tmp_cmc = [x / (i+1.) for i, x in enumerate(tmp_cmc)]
-        tmp_cmc = np.asarray(tmp_cmc) * orig_cmc
-        AP = tmp_cmc.sum() / num_rel
-        all_AP.append(AP)
-    all_cmc = np.asarray(all_cmc).astype(np.float32)
-    all_cmc = all_cmc.sum(0) / num_valid_q
-    mAP = np.mean(all_AP)
-    return all_cmc, mAP
-
-
-
-def test_t(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20]):
-    model.eval()
-
-    with torch.no_grad():
-        qf, q_pids, q_camids= [], [], []
-        for batch_idx, (imgs, pids, camids) in tqdm(enumerate(queryloader),'Extracting features for query set'):
-            if use_gpu: imgs = imgs.cuda()
-
-            
-            features = model(imgs)
-
-            features = features.data.cpu()
-            
-            qf.append(features)
-            
-            q_pids.extend(pids)
-            q_camids.extend(camids)
-        qf = torch.cat(qf, 0)
-        q_pids = np.asarray(q_pids)
-        q_camids = np.asarray(q_camids)
-
-        # logger.info("Extracted features for query set, obtained {}-by-{} matrix".format(qf.size(0), qf.size(1)))
-
-        gf, g_pids, g_camids = [], [], []
-
-        for batch_idx, (imgs, pids, camids) in tqdm(enumerate(galleryloader),'Extracting features for gallery set'):
-            if use_gpu: imgs = imgs.cuda()
-
-
-            features = model(imgs)
-
-
-            features = features.data.cpu()
-
-            gf.append(features)
-
-            g_pids.extend(pids)
-            g_camids.extend(camids)
-        gf = torch.cat(gf, 0)
-
-        g_pids = np.asarray(g_pids)
-        g_camids = np.asarray(g_camids)
-
-
-        # logger.info("Extracted features for gallery set, obtained {}-by-{} matrix".format(gf.size(0), gf.size(1)))
-
-
-    # feature normlization
-    qf = 1. * qf / (torch.norm(qf, 2, dim = -1, keepdim=True).expand_as(qf) + 1e-12)
-    gf = 1. * gf / (torch.norm(gf, 2, dim = -1, keepdim=True).expand_as(gf) + 1e-12)
-    m, n = qf.size(0), gf.size(0)
-    distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
-              torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
-    distmat.addmm_(qf, gf.t(), beta=1, alpha=-2 )
-    distmat = distmat.numpy()
+        save_files = {
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict(),
+            'epoch': epoch}
+        
+        saved_files_dir = os.path.join(cfg.output_dir, 'save')
+        os.makedirs(saved_files_dir,exist_ok=True)
+        torch.save(save_files, "./save_weights/model-{}.pth".format(epoch))
     
-
-    cmc,mAP= evaluate_t(distmat, q_pids, g_pids, q_camids, g_camids, 20)
-
-    logger.info("Results ----------")
-    logger.info("mAP: {:.1%}".format(mAP))
-    logger.info("CMC curve")
-    for r in ranks:
-        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-    logger.info("------------------")
-    return cmc[0]
 
 
 
@@ -338,6 +231,7 @@ def load_config(args):
     if args.name: config.name = args.name
     if args.max_epochs: config.max_epochs = args.max_epochs
     config.resume = args.resume
+    cfg.config_file = args.config
     # embed()
     return config
 

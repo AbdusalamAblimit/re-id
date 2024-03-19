@@ -170,4 +170,4 @@ HRNet/data/coco2017/*
 HRNet/heatmaps/*
 HRNet/test_result.jpg
 
-
+HRNet/heatmap_each_epochs/epoch*

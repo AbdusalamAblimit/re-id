@@ -11,6 +11,8 @@ from model import HighResolutionNet
 from my_dataset_coco import CocoKeypoint
 from train_utils import train_eval_utils as utils
 from IPython import embed
+from loguru import logger
+
 
 def create_model(num_joints, load_pretrain_weights=True):
     model = HighResolutionNet(base_channel=32, num_joints=num_joints)
@@ -18,7 +20,7 @@ def create_model(num_joints, load_pretrain_weights=True):
     if load_pretrain_weights:
         # 载入预训练模型权重
         # 链接:https://pan.baidu.com/s/1Lu6mMAWfm_8GGykttFMpVw 提取码:f43o
-        weights_dict = torch.load("./hrnet_w32.pth", map_location='cpu')
+        weights_dict = torch.load("./imagenet-w32.pth", map_location='cpu')
 
         for k in list(weights_dict.keys()):
             # 如果载入的是imagenet权重，就删除无用权重
@@ -32,14 +34,24 @@ def create_model(num_joints, load_pretrain_weights=True):
 
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
         if len(missing_keys) != 0:
-            print("missing_keys: ", missing_keys)
+            logger.info("missing_keys: ", missing_keys)
 
     return model
 
 
 def main(args):
+
+
+    logger.add(
+        sink='training.log',
+        level='INFO',     
+        encoding='utf-8',  
+        enqueue=True,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+    )
+
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print("Using {} device training.".format(device.type))
+    logger.info("Using {} device training.".format(device.type))
 
     # 用来保存coco_info的文件
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -88,8 +100,8 @@ def main(args):
     batch_size = args.batch_size
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     # embed()
-    # nw = 0
-    print('Using %g dataloader workers' % nw)
+    nw = 0
+    logger.info('Using %g dataloader workers' % nw)
 
     train_data_loader = data.DataLoader(train_dataset,
                                         batch_size=batch_size,
@@ -111,7 +123,7 @@ def main(args):
 
     # create model
     model = create_model(num_joints=args.num_joints)
-    # print(model)
+    # logger.info(model)
 
     model.to(device)
 
@@ -135,14 +147,14 @@ def main(args):
         args.start_epoch = checkpoint['epoch'] + 1
         if args.amp and "scaler" in checkpoint:
             scaler.load_state_dict(checkpoint["scaler"])
-        print("the training process from epoch{}...".format(args.start_epoch))
+        logger.info("the training process from epoch{}...".format(args.start_epoch))
 
     train_loss = []
     learning_rate = []
     val_map = []
 
     for epoch in range(args.start_epoch, args.epochs):
-        # train for one epoch, printing every 50 iterations
+        # train for one epoch, logger.infoing every 50 iterations
         mean_loss, lr = utils.train_one_epoch(model, optimizer, train_data_loader,
                                               device=device, epoch=epoch,
                                               print_freq=50, warmup=True,
@@ -236,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("--combine-keypoints", action="store_true", help="Combine keypoints to reduce the number of heatmaps. If you turn on this option, the model can't predict the keypoints.")
 
     args = parser.parse_args()
-    print(args)
+    logger.info(args)
 
     # 检查保存权重文件夹是否存在，不存在则创建
     if not os.path.exists(args.output_dir):

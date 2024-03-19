@@ -27,7 +27,7 @@ def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only
         logger.info('using GPU to compute original distance')
         distmat = torch.pow(feat,2).sum(dim=1, keepdim=True).expand(all_num,all_num) + \
                       torch.pow(feat, 2).sum(dim=1, keepdim=True).expand(all_num, all_num).t()
-        distmat.addmm_(1,-2,feat,feat.t())
+        distmat.addmm_(feat,feat.t(),beta=1,alpha=-2)
         original_dist = distmat.numpy()
         del feat
         if not local_distmat is None:
@@ -417,7 +417,7 @@ def test(model, queryloader, galleryloader,cfg):
     m, n = qf.size(0), gf.size(0)
     distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
               torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
-    distmat.addmm_(1, -2, qf, gf.t())
+    distmat.addmm_(qf, gf.t(),beta=1,alpha=-2)
     distmat = distmat.numpy()
 
     if not cfg.test.distance== 'global':

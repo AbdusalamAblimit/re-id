@@ -10,6 +10,35 @@ from .coco_eval import EvalCOCOMetric
 from .loss import KpLoss
 
 from IPython import embed
+from matplotlib import pyplot as plt
+import cv2
+import numpy as np
+import os
+from loguru import logger
+def save_epoch_heatmaps(epoch, results, targets):
+    # 确保目录存在
+    epoch_dir = f"./heatmap_each_epochs/epoch_{epoch}"
+    os.makedirs(epoch_dir, exist_ok=True)
+
+    bs, num_joints, h, w = results.shape
+    for i in range(bs):  # 对于每个样本
+        plt.figure(figsize=(num_joints * 3, 6))  # 根据关键点数量调整图片大小
+        for j in range(num_joints):  # 对于每个关键点
+            # 获取预测的热力图和目标热力图
+            heatmap_pred = results[i, j].detach().cpu().numpy()
+            heatmap_true = targets[i]['heatmap'][j].detach().cpu().numpy()
+
+            # 拼接目标热力图和预测热力图
+            combined_heatmap = np.concatenate((heatmap_true, heatmap_pred), axis=1)
+
+            # 绘制拼接后的热力图
+            plt.subplot(1, num_joints, j+1)
+            plt.imshow(combined_heatmap, cmap='jet')
+            plt.title(f"Joint {j+1}")
+            plt.axis('off')
+
+        plt.savefig(f"{epoch_dir}/sample_{i}.png")
+        plt.close()
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch,
                     print_freq=50, warmup=False, scaler=None):
@@ -33,8 +62,9 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
         # 混合精度训练上下文管理器，如果在CPU环境中不起任何作用
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             results = model(images)
-            embed()
+            # embed()
             losses = mse(results, targets)
+
 
         # reduce losses over all GPUs for logging purpose
         loss_dict_reduced = utils.reduce_dict({"losses": losses})
@@ -45,8 +75,8 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
         mloss = (mloss * i + loss_value) / (i + 1)  # update mean losses
 
         if not math.isfinite(loss_value):  # 当计算的损失为无穷大时停止训练
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
+            logger.info("Loss is {}, stopping training".format(loss_value))
+            logger.info(loss_dict_reduced)
             sys.exit(1)
 
         optimizer.zero_grad()
@@ -64,7 +94,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
         metric_logger.update(loss=losses_reduced)
         now_lr = optimizer.param_groups[0]["lr"]
         metric_logger.update(lr=now_lr)
-
+    save_epoch_heatmaps(epoch, results, targets)
     return mloss, now_lr
 
 
