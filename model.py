@@ -192,7 +192,7 @@ class ReID(nn.Module):
         if not self.training:
             return gf,lf
         y = None
-        if cfg.train.loss.id.enabled:
+        if self.cfg.train.loss.id.enabled:
             y = self.classifier(gf)
         return y,gf,lf
 
