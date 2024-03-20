@@ -212,7 +212,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 os.makedirs(saved_files_dir,exist_ok=True)
                 saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
                 torch.save(save_files, saved_files_path)
-                logger.error('')
+                # logger.error('')
                 
     except KeyboardInterrupt:
         logger.error('Catched KeyboardInterrupt. Saving trained model...')
@@ -227,7 +227,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
         os.makedirs(saved_files_dir,exist_ok=True)
         saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
         torch.save(save_files, saved_files_path)
-        logger.error('')
+        logger.error('Saved.')
     
 
 
