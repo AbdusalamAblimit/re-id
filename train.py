@@ -205,7 +205,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 save_files = {
                         'model': model.state_dict(),
                         'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'lr_scheduler': scheduler.state_dict(),
                         'epoch': epoch-1}
                 test(model,query_loader,gallery_loader,cfg)
                 saved_files_dir = os.path.join(cfg.output_dir, 'save')
@@ -220,7 +220,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
         save_files = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'lr_scheduler': lr_scheduler.state_dict(),
+            'lr_scheduler': scheduler.state_dict(),
             'epoch': epoch-1}
         
         saved_files_dir = os.path.join(cfg.output_dir, 'save')
@@ -271,7 +271,7 @@ def parse_args():
     parser.add_argument('--max-epochs', type=int, help='number of total epochs to run')
     args = parser.parse_args()
     assert not (args.use_cpu and args.use_gpu), 'Cannot use both --use-gpu and --use-cpu options. Please specify only one.'
-    embed()
+    # embed()
     return args
 
 
