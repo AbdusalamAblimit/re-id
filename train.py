@@ -184,7 +184,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                     _, predicted = torch.max(outputs,1) 
                     total_running_correct_samples += (predicted == pids).sum().item()
                     total_samples += pids.shape[0]
-                    current_lr = optimizer.param_groups[0]['lr']
+                current_lr = optimizer.param_groups[0]['lr']
 
                 # create pbar information
                 postfix_dict = {
