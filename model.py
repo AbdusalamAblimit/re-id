@@ -165,7 +165,7 @@ class ReID(nn.Module):
         resnet50 = torchvision.models.resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
         self.base = nn.Sequential(*list(resnet50.children())[:-2])
         # self.base = self.local_net
-        
+
         if self.cfg.train.loss.id.enabled:
             if self.neck == 'bnneck':
                 self.bottleneck = nn.BatchNorm1d(self.in_planes)
@@ -188,7 +188,7 @@ class ReID(nn.Module):
             lf = self.local_net(x)
         else: 
             lf = gf
-        if self.neck == 'bnneck':
+        if self.cfg.train.loss.id.enabled and self.neck == 'bnneck':
             gf = self.bottleneck(gf)
         if not self.training:
             return gf,lf
