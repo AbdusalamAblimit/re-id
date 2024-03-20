@@ -165,16 +165,17 @@ class ReID(nn.Module):
         resnet50 = torchvision.models.resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
         self.base = nn.Sequential(*list(resnet50.children())[:-2])
         # self.base = self.local_net
+        
+        if self.cfg.train.loss.id.enabled:
+            if self.neck == 'bnneck':
+                self.bottleneck = nn.BatchNorm1d(self.in_planes)
+                self.bottleneck.bias.requires_grad_(False)  # no shift
+                self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
 
-        if self.neck == 'bnneck':
-            self.bottleneck = nn.BatchNorm1d(self.in_planes)
-            self.bottleneck.bias.requires_grad_(False)  # no shift
-            self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
-
-            self.bottleneck.apply(weights_init_kaiming)
-            self.classifier.apply(weights_init_classifier)
-        else:
-            self.classifier = nn.Linear(self.in_planes, self.num_classes)
+                self.bottleneck.apply(weights_init_kaiming)
+                self.classifier.apply(weights_init_classifier)
+            else:
+                self.classifier = nn.Linear(self.in_planes, self.num_classes)
 
 
     def forward(self,x):
