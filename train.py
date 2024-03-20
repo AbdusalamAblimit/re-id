@@ -141,7 +141,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
     start_epoch = cfg.train.start_epoch
     max_epochs = cfg.train.max_epochs
     evaluate_on_n_epochs = cfg.train.eval_on_n_epochs
-
+    save_on_n_epochs = cfg.train.save_on_n_epochs
     warmup = cfg.train.warmup
 
     if warmup.enabled:
@@ -202,15 +202,17 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             scheduler.step()
 
             if epoch % evaluate_on_n_epochs == 0:
-                save_files = {
-                        'model': model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': scheduler.state_dict(),
-                        'epoch': epoch-1}
                 test(model,query_loader,gallery_loader,cfg)
+
+            if epoch % save_on_n_epochs ==0:
+                save_files = {
+                            'model': model.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'lr_scheduler': scheduler.state_dict(),
+                            'epoch': epoch-1}
                 saved_files_dir = os.path.join(cfg.output_dir, 'save')
                 os.makedirs(saved_files_dir,exist_ok=True)
-                saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
+                saved_files_path = os.path.join(saved_files_dir,"checkpoint-epoch{}.pth".format(epoch))
                 torch.save(save_files, saved_files_path)
                 # logger.error('')
                 

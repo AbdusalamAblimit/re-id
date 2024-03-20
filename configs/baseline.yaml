@@ -25,7 +25,7 @@ train:
   num_classes: 751
   batch:
     p: 8
-    k: 8
+    k: 6
   start_epoch: 0
   max_epochs: 200
   loss:
@@ -47,6 +47,7 @@ train:
   num_workers: 8
 
   eval_on_n_epochs: 10
+  save_on_n_epochs: 20
 
   
   warmup:
