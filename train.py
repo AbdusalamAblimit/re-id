@@ -109,15 +109,15 @@ def main(cfg):
     optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones = lr_cfg.milestones, gamma = lr_cfg.gamma)
 
+
+
+    device = 'cuda:0' if cfg.use_gpu else 'cpu'
     if cfg.resume:
-        checkpoint = torch.load(cfg.resume, map_location='cpu')
+        checkpoint = torch.load(cfg.resume, map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['lr_scheduler'])
         cfg.start_epoch = checkpoint["epoch"]
-
-
-    device = 'cuda:0' if cfg.use_gpu else 'cpu'
 
     if device == 'cuda:0' and cfg.use_cudnn:
         torch.backends.cudnn.enabled = True
