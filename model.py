@@ -98,7 +98,7 @@ class LocalFeatureExtractor(nn.Module):
                         del weights_dict[k]
             missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
             if len(missing_keys) != 0:
-                logger.info("missing_keys: ", missing_keys)
+                logger.info(f"missing_keys: {missing_keys}" )
 
         if hrnet_cfg.lock:
             for param in model.parameters():

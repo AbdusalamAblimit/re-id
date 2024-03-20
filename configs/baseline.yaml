@@ -7,9 +7,9 @@ model:
       lock: true
       pretrained:
         enabled: true
-        path: HRNet/pose_hrnet_w32_256x192.pth
-      num_joints: 17
-  aligned: false
+        path: HRNet/trained_6joint_hrnet.pth
+      num_joints: 6
+  aligned: true
 
     
 

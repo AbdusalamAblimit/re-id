@@ -12,7 +12,7 @@ from my_dataset_coco import CocoKeypoint
 from train_utils import train_eval_utils as utils
 from IPython import embed
 from loguru import logger
-
+from matplotlib import pyplot as plt
 
 def create_model(num_joints, load_pretrain_weights=True):
     model = HighResolutionNet(base_channel=32, num_joints=num_joints)
@@ -20,7 +20,7 @@ def create_model(num_joints, load_pretrain_weights=True):
     if load_pretrain_weights:
         # 载入预训练模型权重
         # 链接:https://pan.baidu.com/s/1Lu6mMAWfm_8GGykttFMpVw 提取码:f43o
-        weights_dict = torch.load("./imagenet-w32.pth", map_location='cpu')
+        weights_dict = torch.load("./pose_hrnet_w32_256x192.pth", map_location='cpu')
 
         for k in list(weights_dict.keys()):
             # 如果载入的是imagenet权重，就删除无用权重
@@ -37,6 +37,94 @@ def create_model(num_joints, load_pretrain_weights=True):
             logger.info("missing_keys: ", missing_keys)
 
     return model
+
+import torch.nn.functional as F
+def save_epoch_heatmaps(epoch, results, targets):
+    # 确保目录存在
+    epoch_dir = f"./heatmap_each_epochs/epoch_{epoch}"
+    os.makedirs(epoch_dir, exist_ok=True)
+
+    bs, num_joints, h, w = results.shape
+    for i in range(bs):  # 对于每个样本
+        plt.figure(figsize=(num_joints * 3, 6))  # 根据关键点数量调整图片大小
+        for j in range(num_joints):  # 对于每个关键点
+            # 获取预测的热力图和目标热力图
+            heatmap_pred = results[i, j].detach().cpu().numpy()
+            heatmap_true = targets[i]['heatmap'][j].detach().cpu().numpy()
+
+            # 拼接目标热力图和预测热力图
+            combined_heatmap = np.concatenate((heatmap_true, heatmap_pred), axis=1)
+
+            # 绘制拼接后的热力图
+            plt.subplot(1, num_joints, j+1)
+            plt.imshow(combined_heatmap, cmap='jet')
+            plt.title(f"Joint {j+1}")
+            plt.axis('off')
+
+        plt.savefig(f"{epoch_dir}/sample_{i}.png")
+        plt.close()
+
+
+def merge_heatmaps(original_heatmaps, kps_weights, combined_keypoint_indexes):
+    # 假设original_heatmaps的形状为(N, 17, H, W)，N为样本数量，17为关键点通道数，H和W为热力图的高度和宽度
+    # kps_weights形状为(17,)
+    # combined_keypoint_indexes为要合并的关键点索引列表
+    N, _, H, W = original_heatmaps.shape
+    num_combined_kps = len(combined_keypoint_indexes)
+    combined_heatmaps = np.zeros((N, num_combined_kps, H, W))
+    
+    for i, indexes in enumerate(combined_keypoint_indexes):
+        valid_indexes = [index for index in indexes if index < original_heatmaps.shape[1]]
+        # 使用有效的索引和对应的权重计算加权平均热力图
+        for index in valid_indexes:
+            weight = kps_weights[index]
+            combined_heatmaps[:, i, :, :] += original_heatmaps[:, index, :, :] * weight
+        # 归一化合并后的热力图
+        combined_heatmaps[:, i, :, :] /= np.sum(kps_weights[valid_indexes])
+    return combined_heatmaps
+
+def calculate_mse(output, target):
+    # 计算MSE
+    # embed()
+    mse_loss = F.mse_loss(output, target, reduction='mean')
+    return mse_loss.item()
+
+def eval(data_loader):
+    kps_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5]
+    combined_keypoint_indexes=[[0,1,2,3,4],
+                 [5,6,11,12],
+                 [5,7,9],[6,8,10],
+                 [11,13,15],[12,14,16]]
+    oroginal_model = create_model(17)
+    new_model = create_model(6)
+    original_weight_path = './model-17-0.pth'
+    new_weight_path = './model-6-20.pth'
+    original_checkpoint = torch.load(original_weight_path, map_location='cpu')
+    oroginal_model.load_state_dict(original_checkpoint['model'])
+    new_checkpoint = torch.load(new_weight_path, map_location='cpu')
+    new_model.load_state_dict(new_checkpoint['model'])
+    oroginal_model = oroginal_model.to('cuda:0')
+    new_model = new_model.to('cuda:0')
+    total_mse_new = 0.0
+    total_mse_original = 0.0
+    from tqdm import tqdm
+    pbar = tqdm(enumerate(data_loader), total=len(data_loader))
+    for i,(images,targets) in pbar:
+        images = images.to('cuda:0')
+
+        target_heatmaps = torch.stack([x['heatmap'] for x in targets])
+        target_heatmaps = target_heatmaps.to('cuda:0')
+        oroginal_model_output = oroginal_model(images)
+        new_model_output=new_model(images)
+        merged_original_model_output = merge_heatmaps(oroginal_model_output.detach().cpu().numpy(),np.array(kps_weights),combined_keypoint_indexes)
+        merged_original_model_output = torch.tensor(merged_original_model_output,device='cuda:0')
+        mse_original = calculate_mse(merged_original_model_output, target_heatmaps)
+        mse_new = calculate_mse(new_model_output.detach(), target_heatmaps)
+        total_mse_new += mse_new
+        total_mse_original += mse_original
+        pbar.set_postfix({'mse_original':total_mse_original/(i+1),
+                          'mse_new': total_mse_new/(i+1)})
+        
 
 
 def main(args):
@@ -120,6 +208,7 @@ def main(args):
                                       pin_memory=True,
                                       num_workers=nw,
                                       collate_fn=val_dataset.collate_fn)
+    # eval(val_data_loader)
 
     # create model
     model = create_model(num_joints=args.num_joints)
@@ -187,6 +276,7 @@ def main(args):
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
         torch.save(save_files, "./save_weights/model-{}.pth".format(epoch))
+    quit()
 
     # plot loss and lr curve
     if len(train_loss) != 0 and len(learning_rate) != 0:

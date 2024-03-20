@@ -109,6 +109,14 @@ def main(cfg):
     optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones = lr_cfg.milestones, gamma = lr_cfg.gamma)
 
+    if cfg.resume:
+        checkpoint = torch.load(cfg.resume, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        cfg.start_epoch = checkpoint["epoch"]
+
+
     device = 'cuda:0' if cfg.use_gpu else 'cpu'
 
     if device == 'cuda:0' and cfg.use_cudnn:
@@ -117,6 +125,7 @@ def main(cfg):
         torch.backends.cudnn.deterministic = True
 
     model = model.to(device)
+
     # test(model,query_loader,gallery_loader,cfg)
     # embed()
     train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg)
@@ -193,7 +202,18 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             scheduler.step()
 
             if epoch % evaluate_on_n_epochs == 0:
+                save_files = {
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch-1}
                 test(model,query_loader,gallery_loader,cfg)
+                saved_files_dir = os.path.join(cfg.output_dir, 'save')
+                os.makedirs(saved_files_dir,exist_ok=True)
+                saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
+                torch.save(save_files, saved_files_path)
+                logger.error('')
+                
     except KeyboardInterrupt:
         logger.error('Catched KeyboardInterrupt. Saving trained model...')
 
@@ -201,11 +221,13 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch}
+            'epoch': epoch-1}
         
         saved_files_dir = os.path.join(cfg.output_dir, 'save')
         os.makedirs(saved_files_dir,exist_ok=True)
-        torch.save(save_files, "./save_weights/model-{}.pth".format(epoch))
+        saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
+        torch.save(save_files, saved_files_path)
+        logger.error('')
     
 
 
@@ -231,7 +253,7 @@ def load_config(args):
     if args.name: config.name = args.name
     if args.max_epochs: config.max_epochs = args.max_epochs
     config.resume = args.resume
-    cfg.config_file = args.config
+    config.config_file = args.config
     # embed()
     return config
 
@@ -249,6 +271,7 @@ def parse_args():
     parser.add_argument('--max-epochs', type=int, help='number of total epochs to run')
     args = parser.parse_args()
     assert not (args.use_cpu and args.use_gpu), 'Cannot use both --use-gpu and --use-cpu options. Please specify only one.'
+    embed()
     return args
 
 
