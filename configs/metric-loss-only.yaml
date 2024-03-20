@@ -9,7 +9,7 @@ model:
         enabled: true
         path: HRNet/trained_6joint_hrnet.pth
       num_joints: 6
-  aligned: false
+  aligned: true
 
     
 
@@ -31,16 +31,16 @@ train:
   loss:
     metric:
       enabled: true
-      loss_func: triplet-hard # triplet, triplet-hard, triplet-hard-aligned-reid
+      loss_func: triplet-hard-aligned-reid # triplet, triplet-hard, triplet-hard-aligned-reid
       weight: 1.0
       margin: 0.3
     id:
-      enabled: true
+      enabled: false
       loss_func: cross-entropy-label-smooth # cross-entropy-label-smooth, cross-entropy
       weight: 1.0
       epsilon: 0.1 # available when using cross-entropy-label-smooth
     center:
-      enabled: true
+      enabled: false
       weight: 0.001
 
   pin_memory: false
@@ -71,6 +71,6 @@ use_gpu: true
 
 use_cudnn: true
 
-name: baseline
+name: metric-loss-only
 
 output_root_dir: outputs

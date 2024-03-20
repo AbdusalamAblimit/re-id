@@ -9,7 +9,7 @@ model:
         enabled: true
         path: HRNet/trained_6joint_hrnet.pth
       num_joints: 6
-  aligned: false
+  aligned: true
 
     
 
@@ -31,7 +31,7 @@ train:
   loss:
     metric:
       enabled: true
-      loss_func: triplet-hard # triplet, triplet-hard, triplet-hard-aligned-reid
+      loss_func: triplet-hard-aligned-reid # triplet, triplet-hard, triplet-hard-aligned-reid
       weight: 1.0
       margin: 0.3
     id:
@@ -71,6 +71,6 @@ use_gpu: true
 
 use_cudnn: true
 
-name: baseline
+name: all-losses
 
 output_root_dir: outputs
