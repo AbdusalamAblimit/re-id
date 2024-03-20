@@ -191,7 +191,9 @@ class ReID(nn.Module):
             gf = self.bottleneck(gf)
         if not self.training:
             return gf,lf
-        y = self.classifier(gf)
+        y = None
+        if cfg.train.loss.id.enabled:
+            y = self.classifier(gf)
         return y,gf,lf
 
 

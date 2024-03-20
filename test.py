@@ -469,3 +469,124 @@ def test(model, queryloader, galleryloader,cfg):
             logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
         logger.info("------------------")
     return cmc[0]
+
+
+
+
+def test_concat(model, queryloader, galleryloader,cfg):
+
+
+    model.eval()
+
+    with torch.no_grad():
+        qf, q_pids, q_camids, lqf = [], [], [], []
+        for batch_idx, (imgs, pids, camids) in tqdm(enumerate(queryloader),total=len(queryloader),desc='Extracting features for query set'):
+            if cfg.use_gpu: imgs = imgs.cuda()
+
+
+            features, local_features = model(imgs)
+
+
+            features = features.data.cpu()
+            local_features = local_features.data.cpu()
+            qf.append(features)
+            lqf.append(local_features)
+            q_pids.extend(pids)
+            q_camids.extend(camids)
+        qf = torch.cat(qf, 0)
+        lqf = torch.cat(lqf,0)
+        q_pids = np.asarray(q_pids)
+        q_camids = np.asarray(q_camids)
+
+        logger.info(f'Extracted {len(qf)} features for {len(set(q_pids))} people in query set.')
+
+        gf, g_pids, g_camids, lgf = [], [], [], []
+
+        for batch_idx, (imgs, pids, camids) in tqdm(enumerate(galleryloader),total=len(galleryloader),desc='Extracting features for gallery set'):
+            if cfg.use_gpu: imgs = imgs.cuda()
+
+            features, local_features = model(imgs)
+
+            features = features.data.cpu()
+            local_features = local_features.data.cpu()
+            gf.append(features)
+            lgf.append(local_features)
+            g_pids.extend(pids)
+            g_camids.extend(camids)
+        gf = torch.cat(gf, 0)
+        lgf = torch.cat(lgf,0)
+        g_pids = np.asarray(g_pids)
+        g_camids = np.asarray(g_camids)
+
+        logger.info(f'Extracted {len(gf)} features for {len(set(g_pids))} people in gallery set.')
+
+    # feature normlization
+    qf = 1. * qf / (torch.norm(qf, 2, dim = -1, keepdim=True).expand_as(qf) + 1e-12)
+    gf = 1. * gf / (torch.norm(gf, 2, dim = -1, keepdim=True).expand_as(gf) + 1e-12)
+    m, n = qf.size(0), gf.size(0)
+    distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
+              torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
+    distmat.addmm_(qf, gf.t(),beta=1,alpha=-2)
+    distmat = distmat.numpy()
+
+    if not cfg.test.distance== 'global':
+        # logger.info("Only using global branch")
+
+        lqf = 1. * lqf / (torch.norm(lqf, 2, dim = -1, keepdim=True).expand_as(lqf) + 1e-12)
+        lgf = 1. * lgf / (torch.norm(lgf, 2, dim = -1, keepdim=True).expand_as(lgf) + 1e-12)
+        local_distmat = torch.pow(lqf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
+                        torch.pow(lgf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
+        local_distmat.addmm_(lqf, lgf.t(),beta=1,alpha=-2)
+        local_distmat = local_distmat.numpy()
+        if cfg.test.distance== 'local':
+            # logger.info("Only using local branch")
+            distmat = local_distmat
+        if cfg.test.distance == 'global_local':
+            # logger.info("Using global and local branches")
+            distmat = local_distmat+distmat
+    logger.info("Computing CMC and mAP")
+    cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
+
+    logger.info("Results ----------")
+    logger.info("mAP: {:.1%}".format(mAP))
+    logger.info("CMC curve")
+    for r in cfg.test.ranks:
+        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+    logger.info("------------------")
+
+    if cfg.test.reranking:
+        if cfg.test.distance == 'global':
+            logger.info("Only using global branch for reranking")
+            distmat = re_ranking(qf,gf,k1=20, k2=6, lambda_value=0.3)
+        else:
+            local_qq_distmat = torch.pow(lqf, 2).sum(dim=1, keepdim=True).expand(m, m) + \
+                               torch.pow(lqf, 2).sum(dim=1, keepdim=True).expand(m, m).t()
+            local_qq_distmat.addmm_(lqf, lqf.t(),beta=1,alpha=-2)
+            local_qq_distmat = local_qq_distmat.numpy()
+            
+            local_gg_distmat = torch.pow(lgf, 2).sum(dim=1, keepdim=True).expand(n, n) + \
+                               torch.pow(lgf, 2).sum(dim=1, keepdim=True).expand(n, n).t()
+            local_gg_distmat.addmm_(lgf, lgf.t(),beta=1,alpha=-2)
+            local_gg_distmat = local_gg_distmat.numpy()
+
+            local_dist = np.concatenate(
+                [np.concatenate([local_qq_distmat, local_distmat], axis=1),
+                 np.concatenate([local_distmat.T, local_gg_distmat], axis=1)],
+                axis=0)
+            if cfg.test.distance == 'local':
+                logger.info("Only using local branch for reranking")
+                distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=True)
+            elif cfg.test.distance == 'global_local':
+                logger.info("Using global and local branches for reranking")
+                distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=False)
+        logger.info("Computing CMC and mAP for re_ranking")
+        cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
+
+        logger.info("Results ----------")
+        logger.info("mAP(RK): {:.1%}".format(mAP))
+        logger.info("CMC curve(RK)")
+        for r in cfg.test.ranks:
+            logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+        logger.info("------------------")
+    return cmc[0]
+

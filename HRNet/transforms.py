@@ -526,7 +526,7 @@ class KeypointToHeatMap(object):
             heatmap = combined_heatmap
             kps_weights = new_kps_weights
 
-        # embed()
+        embed()
         # plot_heatmap(image, heatmap, kps, kps_weights)
         target["heatmap"] = torch.as_tensor(heatmap, dtype=torch.float32)
         target["kps_weights"] = torch.as_tensor(kps_weights, dtype=torch.float32)

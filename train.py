@@ -180,16 +180,20 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                     loss_sums[key] += value
                 
                 # compute rank-1 by id
-                _, predicted = torch.max(outputs,1) 
-                total_running_correct_samples += (predicted == pids).sum().item()
-                total_samples += pids.shape[0]
-                current_lr = optimizer.param_groups[0]['lr']
+                if outputs:
+                    _, predicted = torch.max(outputs,1) 
+                    total_running_correct_samples += (predicted == pids).sum().item()
+                    total_samples += pids.shape[0]
+                    current_lr = optimizer.param_groups[0]['lr']
 
                 # create pbar information
                 postfix_dict = {
-                    'acc': total_running_correct_samples / total_samples,
-                    'lr': current_lr,
+                    'lr': current_lr
                 }
+                if outputs:
+                    postfix_dict.update({'acc': total_running_correct_samples / total_samples})
+
+                
 
                 # update pbar information
                 postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
