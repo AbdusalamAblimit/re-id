@@ -153,7 +153,7 @@ def main(args):
                            dtype=np.float32).reshape((args.num_joints,))
     
     combined_keypoint_indexes = person_kps_info["combined_keypoint_indexes"]
-
+    skeleton= person_kps_info["skeleton"]
     if(args.combine_keypoints):
         args.num_joints = len(combined_keypoint_indexes)
 
@@ -163,7 +163,7 @@ def main(args):
             transforms.AffineTransform(scale=(0.65, 1.35), rotation=(-45, 45), fixed_size=fixed_size),
             transforms.RandomHorizontalFlip(0.5, person_kps_info["flip_pairs"]),
             transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
-                                         combine_keypoints=args.combine_keypoints,
+                                         combine_keypoints=args.combine_keypoints,skeleton = skeleton,
                                          combined_keypoint_indexes = combined_keypoint_indexes),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -171,7 +171,7 @@ def main(args):
         "val": transforms.Compose([
             transforms.AffineTransform(scale=(1.25, 1.25), fixed_size=fixed_size),
             transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
-                                         combine_keypoints=args.combine_keypoints,
+                                         combine_keypoints=args.combine_keypoints,skeleton = skeleton,
                                          combined_keypoint_indexes = combined_keypoint_indexes),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -188,7 +188,7 @@ def main(args):
     batch_size = args.batch_size
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     # embed()
-    nw = 0
+    # nw = 0
     logger.info('Using %g dataloader workers' % nw)
 
     train_data_loader = data.DataLoader(train_dataset,
@@ -345,3 +345,4 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir)
 
     main(args)
+
