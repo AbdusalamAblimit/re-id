@@ -471,22 +471,22 @@ class KeypointToHeatMap(object):
         self.skeleton = None
         if combine_keypoints:
             self.skeleton = []
-            self.pair2group = {}
+            self.pair2groups = {}
             self.pair_count = [0]*len(combined_keypoint_indexes)
             for [p1,p2] in skeleton:
                 p1-=1
                 p2-=1
                 is_combined = False
-                group_num = None
+                group_nums = []
                 for i,kps in enumerate(self.combined_keypoint_indexes):
                     if p1 in kps and p2 in kps:
                         is_combined = True
-                        group_num = i
-                        break
+                        group_nums.append(i)
                 if is_combined:
                     self.skeleton.append([p1,p2])
-                    self.pair2group[(p1,p2)] = group_num
-                    self.pair_count[group_num] += 1
+                    self.pair2groups[(p1,p2)] = group_nums
+                    for group_num in group_nums:
+                        self.pair_count[group_num] += 1
         # generate gaussian kernel(not normalized)
         kernel_size = 2 * self.kernel_radius + 1
         kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
@@ -581,14 +581,14 @@ class KeypointToHeatMap(object):
                 pt1 = heatmap_kps[kp_id1]
                 pt2 = heatmap_kps[kp_id2]
                 # 在combined_heatmap中为每对关键点绘制直线
-                heatmap_id = self.pair2group[(kp_id1,kp_id2)]
-                # embed()
-                combined_heatmap[heatmap_id] = draw_line_heatmap(combined_heatmap[heatmap_id], pt1, pt2,
-                                                                 kps_weights[kp_id1],kps_weights[kp_id2],self.kernel_radius,self.kernel,
-                                                                 self.heatmap_hw)
-                new_kps_weights[heatmap_id] += (kps_weights[kp_id1] + kps_weights[kp_id2]) / 2
+                for heatmap_id in self.pair2groups[(kp_id1,kp_id2)]:
+                    # embed()
+                    combined_heatmap[heatmap_id] = draw_line_heatmap(combined_heatmap[heatmap_id], pt1, pt2,
+                                                                    kps_weights[kp_id1],kps_weights[kp_id2],self.kernel_radius,self.kernel,
+                                                                    self.heatmap_hw)
+                    new_kps_weights[heatmap_id] += (kps_weights[kp_id1] + kps_weights[kp_id2]) / 2
             for heatmap_id in range(len(new_kps_weights)):
-                pair_count = self.pair_count[heatmap_id]  # 假设self.pair_count记录了每组中包含的关键点对数量
+                pair_count = self.pair_count[heatmap_id]  # self.pair_count记录了每组中包含的关键点对数量
                 if pair_count > 0:
                     new_kps_weights[heatmap_id] /= pair_count
             # 更新heatmap为组合后的heatmap，此时heatmap中包含了关键点连线的热度信息

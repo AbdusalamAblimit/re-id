@@ -180,7 +180,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                     loss_sums[key] += value
                 
                 # compute rank-1 by id
-                if outputs:
+                if cfg.train.loss.id.enabled:
                     _, predicted = torch.max(outputs,1) 
                     total_running_correct_samples += (predicted == pids).sum().item()
                     total_samples += pids.shape[0]
@@ -190,7 +190,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 postfix_dict = {
                     'lr': current_lr
                 }
-                if outputs:
+                if cfg.train.loss.id.enabled:
                     postfix_dict.update({'acc': total_running_correct_samples / total_samples})
 
                 
