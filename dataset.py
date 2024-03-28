@@ -1,16 +1,10 @@
-import os
-from PIL import Image
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from IPython import embed 
 
-def read_image(img_path):
-    if not os.path.exists(img_path):
-        raise IOError(f"{img_path} does not exist.")
-    img = Image.open(img_path).convert('RGB')
-    return img
-
+from utils import read_image
 
 class ImageDataset(Dataset):
     def __init__(self, dataset, transform = None):

@@ -20,6 +20,8 @@ import os
 import time
 from loguru import logger
 import shutil
+from utils import read_sample_images
+from torch.utils.tensorboard import SummaryWriter
 
 def main(cfg):
 
@@ -29,6 +31,8 @@ def main(cfg):
     os.makedirs(os.path.join(cfg.output_root_dir,cfg.name),exist_ok=True)
     os.makedirs(cfg.output_dir,exist_ok=True)
     shutil.copyfile(cfg.config_file, os.path.join(cfg.output_dir,'config.yaml'))
+
+    
 
     logger.remove()
     logger.add(lambda msg: tqdm.write(msg, end=""))
@@ -88,7 +92,8 @@ def main(cfg):
     train_dataset = ImageDataset(data.train, transform = transform_train)
     sampler = RandomIdentitySampler(data.train, num_instances = K)
     train_loader = DataLoader(train_dataset, batch_size = P*K, sampler = sampler, 
-                              num_workers = cfg.train.num_workers, pin_memory = cfg.train.pin_memory)
+                              num_workers = cfg.train.num_workers, pin_memory = cfg.train.pin_memory,
+                              drop_last= True)
     
     query_loader = DataLoader(query_dataset,  shuffle=False, batch_size = cfg.test.batch_size,
                               num_workers = cfg.test.num_workers, pin_memory = cfg.test.pin_memory)
@@ -126,9 +131,18 @@ def main(cfg):
 
     model = model.to(device)
 
+
+    if cfg.tensorboard.enabled:
+        tb_writer = SummaryWriter(os.path.join(cfg.output_dir,'tb'))
+        cfg.tb_writer = tb_writer
+        sample = torch.rand([1,3,height,width],device = device)
+        tb_writer.add_graph(model, sample)
+        sample_images = read_sample_images('./sample_images',transform_test,device)
+    # embed()
+
     # test(model,query_loader,gallery_loader,cfg)
     # embed()
-    train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg)
+    train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images)
     # embed()
     pass
 
@@ -137,7 +151,7 @@ from test import test
 
 
 
-def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg):
+def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images = None):
     start_epoch = cfg.train.start_epoch
     max_epochs = cfg.train.max_epochs
     evaluate_on_n_epochs = cfg.train.eval_on_n_epochs
@@ -156,7 +170,6 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             loss_sums = {}  # 初始化损失累加字典
             total_running_correct_samples = 0
             total_samples = 0
-
             for i,data in pbar:
                 imgs,pids,camids = data
                 imgs = imgs.to(device)
@@ -199,14 +212,28 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
 
                 pbar.set_postfix(postfix_dict)
-            logger.info(f'{pbar.desc}: {len(pbar)} iterations. {pbar.postfix}')
+
+            
             if warmup.enabled and epoch <= warmup.iters:
                 for param_group in optimizer.param_groups:
                     param_group['lr'] += warmup.lr_growth
             scheduler.step()
 
+            logger.info(f'{pbar.desc}: {len(pbar)} iterations. {pbar.postfix}')
+
+            if cfg.tensorboard.enabled:
+                for key,value in loss_sums.items():
+                    cfg.tb_writer.add_scalar(key, value/len(pbar), epoch)
+                model.eval()
+                model.local_net.draw_feature_to_tensorboard(sample_images,cfg.tb_writer,f'epoch{epoch}-local')
+            
             if epoch % evaluate_on_n_epochs == 0:
-                test(model,query_loader,gallery_loader,cfg)
+                cmc,mAP = test(model,query_loader,gallery_loader,cfg)
+                if cfg.tensorboard.enabled:
+                    cfg.tb_writer.add_scalar('mAP',mAP,epoch)
+                    for r in cfg.test.ranks:
+                        cfg.tb_writer.add_scalar(f'rank-{r}',cmc[r-1],epoch)
+                    
 
             if epoch % save_on_n_epochs ==0:
                 save_files = {
@@ -228,7 +255,6 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': scheduler.state_dict(),
             'epoch': epoch-1}
-        
         saved_files_dir = os.path.join(cfg.output_dir, 'save')
         os.makedirs(saved_files_dir,exist_ok=True)
         saved_files_path = os.path.join(saved_files_dir,"checkpoint-interrupted-epoch{}.pth".format(epoch))
@@ -285,40 +311,3 @@ if __name__=='__main__':
     args = parse_args()
     cfg = load_config(args)
     main(cfg)
-    quit()
-    from samplers import   RandomIdentitySampler
-    from dataset import read_image
-    import torchvision.transforms.functional as F
-    def imshow(inp, title=None):
-        """Imshow for Tensor."""
-
-        plt.imshow(inp)
-        if title is not None:
-            plt.title(title)
-    dataset = Market1501()
-
-    # 使用RandomIdentitySampler
-    train_dataset = ImageDataset(dataset.train,transform=transform_train)
-    sampler = RandomIdentitySampler(dataset.train, num_instances=P)
-    train_loader = DataLoader(train_dataset, batch_size=P*K, sampler=sampler, num_workers=0)
-
-    import matplotlib.pyplot as plt
-
-    # 获取一个批次的数据
-    data_iter = iter(train_loader)
-    images, labels, _ = next(data_iter)
-
-    # embed()
-    # 打印批次中的几张图片
-    # 假设每行打印4张图片
-    # 打印批次中的几张图片
-    plt.figure(figsize=(10, 10))
-    for i in range(P*K):
-        ax = plt.subplot(P, K, i + 1)
-        img = images[i]
-        # 反归一化处理
-        img = F.to_pil_image(img)
-        plt.imshow(img)
-        ax.set_title(f"Label: {labels[i].item()}")
-        plt.axis('off')
-    plt.show()

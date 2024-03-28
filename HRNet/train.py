@@ -248,6 +248,9 @@ def main(args):
                                               device=device, epoch=epoch,
                                               print_freq=50, warmup=True,
                                               scaler=scaler)
+        
+        print(f'Mean loss:{mean_loss}')
+
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
 

@@ -6,6 +6,10 @@ from IPython import embed
 from HRNet.model.hrnet import HighResolutionNet
 from torchvision.models.resnet import resnet50, resnet34, resnet18
 from loguru import logger
+from utils import save_combined_features,save_combined_features_to_tensorboard,UnNormalize
+
+
+
 
 
 def weights_init_kaiming(m):
@@ -54,6 +58,27 @@ class FeatureTransform(nn.Module):
         return x
 
 
+class ChannelAttentionModule(nn.Module):
+    def __init__(self, num_channels, reduction_ratio=16):
+        super(ChannelAttentionModule, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        mid_channel = max(1, num_channels // reduction_ratio)
+        self.fc = nn.Sequential(
+            nn.Linear(num_channels, mid_channel, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_channel, num_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        # embed()
+        y = self.avg_pool(x)
+        y = y.view(b,c)
+        y = self.fc(y)
+        y = y.view(b,c,1,1)
+        return x * y.expand_as(x)
+
 
 class LocalFeatureExtractor(nn.Module):
     def __init__(self, cfg):
@@ -65,7 +90,11 @@ class LocalFeatureExtractor(nn.Module):
 
         # 初始化ResNet50作为颜色信息提取器，切割至layer1
         self.color_feature_extractor = self._init_color_feature_extractor()
-        
+
+        self.heatmap_channel_attention = ChannelAttentionModule(num_channels=256) 
+        self.color_channel_attention = ChannelAttentionModule(num_channels=256) 
+        self.combined_channel_attention = ChannelAttentionModule(num_channels=256) 
+
         # 定义处理HRNet heatmap的卷积层
         self.heatmap_transform = FeatureTransform(cfg.model.local.hrnet.num_joints, 256)
 
@@ -77,9 +106,6 @@ class LocalFeatureExtractor(nn.Module):
 
         # 定义融合后继续的ResNet50部分，从layer2开始
         self.resnet_continued = self._init_resnet_continued()
-
-        # 测试用
-        self.color_to_heatmap = FeatureTransform(256, cfg.model.local.hrnet.num_joints)
     
     def _init_hrnet(self,hrnet_cfg):
 
@@ -124,21 +150,18 @@ class LocalFeatureExtractor(nn.Module):
     def forward(self, x):
         # HRNet提取特征
         heatmap = self.hrnet(x)
-        # heatmap = self.heatmap_transform(heatmap)  # 将通道数变为256
+        heatmap = self.heatmap_transform(heatmap)  # 将通道数变为256
+
+        attention_heatmap = self.heatmap_channel_attention(heatmap)
 
         # 使用ResNet50到layer1的部分提取颜色特征
         color_features = self.color_feature_extractor(x) # 输出的通道数为256
-        # color_features = self.color_features_transform(color_features)  # 将通道数变为128
 
-        color_features = self.color_to_heatmap(color_features)
+        attention_color = self.color_channel_attention(color_features)
 
         # 合并特征
-        # combined_features = torch.cat([color_features, heatmap], dim=1)  # 此时通道数为256
-        combined_features = color_features * heatmap
+        combined_features = attention_color * attention_heatmap
 
-        combined_features = self.heatmap_transform(combined_features)
-
-        # 合并特征后的进一步处理
         combined_features = self.combined_features_transform(combined_features)
 
         # 继续通过ResNet50的剩余部分
@@ -149,6 +172,47 @@ class LocalFeatureExtractor(nn.Module):
         f = torch.flatten(f, 1)
         
         return f
+
+
+    def draw_feature_to_tensorboard(self,x,writer,tag_prefix):
+
+        unnnorm = UnNormalize()
+
+
+        heatmap = self.hrnet(x)
+
+        save_combined_features_to_tensorboard(x,heatmap,writer,f'{tag_prefix}_heatmap_hrnet',unnnorm)
+
+        heatmap = self.heatmap_transform(heatmap)  # 将通道数变为256
+
+        save_combined_features_to_tensorboard(x,heatmap,writer,f'{tag_prefix}_heatmap_transformed',unnnorm)
+
+        attention_heatmap = self.heatmap_channel_attention(heatmap)
+
+        save_combined_features_to_tensorboard(x,attention_heatmap,writer,f'{tag_prefix}_heatmap_attention',unnnorm)
+
+        # 使用ResNet50到layer1的部分提取颜色特征
+        color_features = self.color_feature_extractor(x) # 输出的通道数为256
+
+        save_combined_features_to_tensorboard(x,color_features,writer,f'{tag_prefix}_color',unnnorm)
+
+        attention_color = self.color_channel_attention(color_features)
+
+        save_combined_features_to_tensorboard(x,attention_color,writer,f'{tag_prefix}_color_attention',unnnorm)
+
+        # 合并特征
+        combined_features = attention_color * attention_heatmap
+
+        save_combined_features_to_tensorboard(x,combined_features,writer,f'{tag_prefix}_combined',unnnorm)
+
+        combined_features = self.combined_features_transform(combined_features)
+
+        save_combined_features_to_tensorboard(x,combined_features,writer,f'{tag_prefix}_combined_transformed',unnnorm)
+
+        # 继续通过ResNet50的剩余部分
+        features = self.resnet_continued(combined_features)
+
+        save_combined_features_to_tensorboard(x,features,writer,f'{tag_prefix}_final_feature_maps',unnnorm)
 
 
 

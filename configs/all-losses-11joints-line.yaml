@@ -25,7 +25,7 @@ train:
   num_classes: 751
   batch:
     p: 8
-    k: 6
+    k: 8
   start_epoch: 0
   max_epochs: 200
   loss:
@@ -74,3 +74,7 @@ use_cudnn: true
 name: all-losses
 
 output_root_dir: outputs
+
+
+tensorboard:
+  enabled: true

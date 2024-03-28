@@ -468,7 +468,7 @@ def test(model, queryloader, galleryloader,cfg):
         for r in cfg.test.ranks:
             logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
         logger.info("------------------")
-    return cmc[0]
+    return cmc,mAP
 
 
 
@@ -588,5 +588,5 @@ def test_concat(model, queryloader, galleryloader,cfg):
         for r in cfg.test.ranks:
             logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
         logger.info("------------------")
-    return cmc[0]
+    return cmc,mAP
 
