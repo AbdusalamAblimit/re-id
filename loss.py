@@ -87,6 +87,54 @@ from loguru import logger
 
 
 
+class ArcFaceLoss(nn.Module):
+    """Implementation of ArcFace loss which enhances the feature discrimination based on angular distance."""
+
+    def __init__(self, in_features, out_features, s=64.0, m=0.1, use_gpu=True):
+        """
+        Args:
+            in_features (int): Dimensionality of the input features (size of the last layer of the model).
+            out_features (int): Number of classes.
+            s (float): Norm of the input feature vector.
+            m (float): Margin to enhance inter-class separability.
+            use_gpu (bool): Whether to use GPU.
+        """
+        super(ArcFaceLoss, self).__init__()
+        self.use_gpu = use_gpu
+        self.in_features = in_features
+        self.out_features = out_features
+        self.s = s
+        self.m = m
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+        if self.use_gpu:
+          self.weight = nn.Parameter(self.weight.cuda())  # Correct way to move a parameter to GPU
+
+
+    def forward(self, inputs, labels):
+        """
+        Args:
+            inputs: Input features, shape (batch_size, in_features).
+            labels: Target labels, shape (batch_size).
+        """
+        # Normalize weight and inputs
+        cos_theta = F.linear(F.normalize(inputs), F.normalize(self.weight))
+        cos_theta = cos_theta.clamp(-1, 1)  # Numerical stability
+        theta = torch.acos(cos_theta)
+        # Add margin
+        one_hot = torch.zeros(cos_theta.size(), device='cuda' if self.use_gpu else 'cpu')
+        one_hot.scatter_(1, labels.view(-1, 1).long(), 1)
+        theta_m = theta + one_hot * self.m
+        # Convert back to cos after adding margin
+        cos_theta_m = torch.cos(theta_m)
+        # Scale the logits
+        logits = self.s * cos_theta_m
+        # Use cross entropy loss
+        loss = F.cross_entropy(logits, labels)
+        return loss
+
+
 
 class CrossEntropyLoss(nn.Module):
     """Cross entropy loss.
@@ -138,52 +186,111 @@ class CrossEntropyLabelSmooth(nn.Module):
         loss = (- targets * log_probs).mean(0).sum()
         return loss
 
-class TripletHardLoss(nn.Module):
-    """Triplet loss with hard positive/negative mining.
+# class TripletHardLoss(nn.Module):
+#     """Tripl`et loss with hard positive/negative mining based on cosine distance.
 
-    Reference:
-    Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
+#     Reference:
+#     Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
 
-    Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
+#     This version uses cosine distance instead of Euclidean distance.
+#     """
+#     def __init__(self, margin=0.3, mutual_flag=False):
+#         super(TripletHardLoss, self).__init__()
+#         self.margin = margin
+#         self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+#         self.mutual = mutual_flag
 
+#     def forward(self, inputs, targets):
+#         """
+#         Args:
+#             inputs: feature matrix with shape (batch_size, feat_dim), assumed to be normalized.
+#             targets: ground truth labels with shape (num_classes)
+#         """
+#         n = inputs.size(0)
+#         # Normalize the input features to unit length
+#         inputs = F.normalize(inputs, p=2, dim=1)
+#         # Compute pairwise cosine similarity
+#         cos_sim = torch.mm(inputs, inputs.t())
+#         # Convert cosine similarity to cosine distance
+#         dist = 1 - cos_sim
+
+#         # For each anchor, find the hardest positive and negative based on cosine distance
+#         mask = targets.expand(n, n).eq(targets.expand(n, n).t())
+#         dist_ap, dist_an = [], []
+#         for i in range(n):
+#             dist_ap.append(dist[i][mask[i]].max().unsqueeze(0))  # Hardest positive: max cosine distance
+#             dist_an.append(dist[i][mask[i] == 0].min().unsqueeze(0))  # Hardest negative: min cosine distance
+#         dist_ap = torch.cat(dist_ap)
+#         dist_an = torch.cat(dist_an)
+
+#         # Compute ranking hinge loss
+#         y = torch.ones_like(dist_an)
+#         loss = self.ranking_loss(dist_an, dist_ap, y)
+#         if self.mutual:
+#             return loss, dist
+#         return loss
+
+
+def normalize(x, axis=-1):
+    """Normalizing to unit length along the specified dimension.
     Args:
-        margin (float): margin for triplet.
+      x: pytorch Variable
+    Returns:
+      x: pytorch Variable, same shape as input
     """
-    def __init__(self, margin=0.3, mutual_flag = False):
+    x = 1. * x / (torch.norm(x, 2, axis, keepdim=True).expand_as(x) + 1e-12)
+    return x
+
+
+
+
+class TripletHardLoss(nn.Module):
+    """Modified from Tong Xiao's open-reid (https://github.com/Cysu/open-reid).
+    Related Triplet Loss theory can be found in paper 'In Defense of the Triplet
+    Loss for Person Re-Identification'."""
+
+    def __init__(self, margin=None, metric='euclidean'):
         super(TripletHardLoss, self).__init__()
         self.margin = margin
-        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
-        self.mutual = mutual_flag
+        self.metric = metric
+        if margin is not None:
+            self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+        else:
+            self.ranking_loss = nn.SoftMarginLoss()
 
-    def forward(self, inputs, targets):
-        """
-        Args:
-            inputs: feature matrix with shape (batch_size, feat_dim)
-            targets: ground truth labels with shape (num_classes)
-        """
-        n = inputs.size(0)
-        # inputs = 1. * inputs / (torch.norm(inputs, 2, dim=-1, keepdim=True).expand_as(inputs) + 1e-12)
-        # Compute pairwise distance, replace by the official when merged
-        dist = torch.pow(inputs, 2).sum(dim=1, keepdim=True).expand(n, n)
-        dist = dist + dist.t()
-        # dist.addmm_(1, -2, inputs, inputs.t())
-        dist.addmm_(mat1=inputs, mat2=inputs.t(), beta=1, alpha=-2)
+    def euclidean_dist(self, x, y):
+        m, n = x.size(0), y.size(0)
+        xx = torch.pow(x, 2).sum(1, keepdim=True).expand(m, n)
+        yy = torch.pow(y, 2).sum(1, keepdim=True).expand(n, m).t()
+        dist = xx + yy
+        dist.addmm_(1, -2, x, y.t())
         dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
-        # For each anchor, find the hardest positive and negative
-        mask = targets.expand(n, n).eq(targets.expand(n, n).t())
-        dist_ap, dist_an = [], []
-        for i in range(n):
-            dist_ap.append(dist[i][mask[i]].max().unsqueeze(0))
-            dist_an.append(dist[i][mask[i] == 0].min().unsqueeze(0))
-        dist_ap = torch.cat(dist_ap)
-        dist_an = torch.cat(dist_an)
-        # Compute ranking hinge loss
-        y = torch.ones_like(dist_an)
-        loss = self.ranking_loss(dist_an, dist_ap, y)
-        if self.mutual:
-            return loss, dist
-        return loss
+        return dist
 
+    def cosine_dist(self, x, y):
+        x_norm = F.normalize(x, p=2, dim=1)
+        y_norm = F.normalize(y, p=2, dim=1)
+        cosine_similarity = torch.mm(x_norm, y_norm.t())
+        dist = 1 - cosine_similarity
+        return dist
+
+    def forward(self, global_feat, labels, normalize_feature=False):
+        if normalize_feature:
+            global_feat = F.normalize(global_feat, p=2, dim=1)
+        if self.metric == 'euclidean':
+            dist_mat = self.euclidean_dist(global_feat, global_feat)
+        elif self.metric == 'cosine':
+            dist_mat = self.cosine_dist(global_feat, global_feat)
+        else:
+            raise ValueError("Unsupported metric: {}".format(self.metric))
+
+        dist_ap, dist_an = hard_example_mining(dist_mat, labels)
+        y = dist_an.new().resize_as_(dist_an).fill_(1)
+        if self.margin is not None:
+            loss = self.ranking_loss(dist_an, dist_ap, y)
+        else:
+            loss = self.ranking_loss(dist_an - dist_ap, y)
+        return loss
 
 
 def hard_example_mining(dist_mat, labels, return_inds=False):
@@ -242,140 +349,85 @@ def hard_example_mining(dist_mat, labels, return_inds=False):
 
 
 
-def shortest_dist(dist_mat):
-  """Parallel version.
-  Args:
-    dist_mat: pytorch Variable, available shape:
-      1) [m, n]
-      2) [m, n, N], N is batch size
-      3) [m, n, *], * can be arbitrary additional dimensions
-  Returns:
-    dist: three cases corresponding to `dist_mat`:
-      1) scalar
-      2) pytorch Variable, with shape [N]
-      3) pytorch Variable, with shape [*]
-  """
-  m, n = dist_mat.size()[:2]
-  # Just offering some reference for accessing intermediate distance.
-  dist = [[0 for _ in range(n)] for _ in range(m)]
-  for i in range(m):
-    for j in range(n):
-      if (i == 0) and (j == 0):
-        dist[i][j] = dist_mat[i, j]
-      elif (i == 0) and (j > 0):
-        dist[i][j] = dist[i][j - 1] + dist_mat[i, j]
-      elif (i > 0) and (j == 0):
-        dist[i][j] = dist[i - 1][j] + dist_mat[i, j]
-      else:
-        dist[i][j] = torch.min(dist[i - 1][j], dist[i][j - 1]) + dist_mat[i, j]
-  dist = dist[-1][-1]
-  return dist
 
-def batch_euclidean_dist(x, y):
-  """
-  Args:
-    x: pytorch Variable, with shape [Batch size, Local part, Feature channel]
-    y: pytorch Variable, with shape [Batch size, Local part, Feature channel]
-  Returns:
-    dist: pytorch Variable, with shape [Batch size, Local part, Local part]
-  """
-  assert len(x.size()) == 3
-  assert len(y.size()) == 3
-  assert x.size(0) == y.size(0)
-  assert x.size(-1) == y.size(-1)
-
-  N, m, d = x.size()
-  N, n, d = y.size()
-
-  # shape [N, m, n]
-  xx = torch.pow(x, 2).sum(-1, keepdim=True).expand(N, m, n)
-  yy = torch.pow(y, 2).sum(-1, keepdim=True).expand(N, n, m).permute(0, 2, 1)
-  dist = xx + yy
-  dist.baddbmm_(1, -2, x, y.permute(0, 2, 1))
-  dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
-  return dist
-
-def batch_local_dist(x, y):
-  """
-  Args:
-    x: pytorch Variable, with shape [N, m, d]
-    y: pytorch Variable, with shape [N, n, d]
-  Returns:
-    dist: pytorch Variable, with shape [N]
-  """
-  assert len(x.size()) == 3
-  assert len(y.size()) == 3
-  assert x.size(0) == y.size(0)
-  assert x.size(-1) == y.size(-1)
-
-  # shape [N, m, n]
-  dist_mat = batch_euclidean_dist(x, y)
-  dist_mat = (torch.exp(dist_mat) - 1.) / (torch.exp(dist_mat) + 1.)
-  # shape [N]
-  dist = shortest_dist(dist_mat.permute(1, 2, 0))
-  return dist
 
 class TripletHardLossAlignedReID(nn.Module):
-    """Triplet loss with hard positive/negative mining.
-
-    Reference:
-    Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
-
-    Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
-
-    Args:
-        margin (float): margin for triplet.
-    """
-    def __init__(self, margin=0.3, mutual_flag = False):
+    def __init__(self, margin=0.3, mutual_flag=False,metric='euclidean'):
         super(TripletHardLossAlignedReID, self).__init__()
         self.margin = margin
+        self.metric = metric
         self.ranking_loss = nn.MarginRankingLoss(margin=margin)
         self.ranking_loss_local = nn.MarginRankingLoss(margin=margin)
         self.mutual = mutual_flag
 
-    def forward(self, inputs, targets, local_features):
-        """
-        Args:
-            inputs: feature matrix with shape (batch_size, feat_dim)
-            targets: ground truth labels with shape (num_classes)
-        """
-        n = inputs.size(0)
-        #inputs = 1. * inputs / (torch.norm(inputs, 2, dim=-1, keepdim=True).expand_as(inputs) + 1e-12)
-        # Compute pairwise distance, replace by the official when merged
-        dist = torch.pow(inputs, 2).sum(dim=1, keepdim=True).expand(n, n)
-        dist = dist + dist.t()
-        dist.addmm_(inputs, inputs.t(),beta=1,alpha=-2)
+    def euclidean_dist(self, x, y):
+        m, n = x.size(0), y.size(0)
+        xx = torch.pow(x, 2).sum(1, keepdim=True).expand(m, n)
+        yy = torch.pow(y, 2).sum(1, keepdim=True).expand(n, m).t()
+        dist = xx + yy
+        dist.addmm_(1, -2, x, y.t())
         dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+        return dist
+
+    def cosine_dist(self, x, y):
+        x_norm = F.normalize(x, p=2, dim=1)
+        y_norm = F.normalize(y, p=2, dim=1)
+        cos_sim = torch.mm(x_norm, y_norm.t())
+        dist = 1 - cos_sim
+        return dist
+
+    def forward(self, inputs, targets, local_features):
+        n = inputs.size(0)
+
+        # Normalize global and local features
+        # inputs = F.normalize(inputs, p=2, dim=1)
+        # local_features = F.normalize(local_features, p=2, dim=1)
+
+        # Select the distance metric
+        if self.metric == 'euclidean':
+            dist = self.euclidean_dist(inputs, inputs)
+        elif self.metric == 'cosine':
+            dist = self.cosine_dist(inputs, inputs)
+        else:
+            raise ValueError("Unsupported metric: {}".format(self.metric))
+
         # For each anchor, find the hardest positive and negative
-        dist_ap,dist_an,p_inds,n_inds = hard_example_mining(dist,targets,return_inds=True)
-         # Apply the same hard examples found by global features to local features
-        
+        dist_ap, dist_an, p_inds, n_inds = hard_example_mining(dist, targets, return_inds=True)
+
+        # Apply the same hard examples found by global features to local features
+
         local_features_positive = local_features[p_inds]
         local_features_negative = local_features[n_inds]
-        
-        # Compute distances for local features
-        local_dist_ap = torch.norm(local_features - local_features_positive, p=2, dim=1)
-        local_dist_an = torch.norm(local_features - local_features_negative, p=2, dim=1)
 
+        # Compute distances for local features using the same metric
+        if self.metric == 'euclidean':
+            local_dist_ap = self.euclidean_dist(local_features, local_features_positive).diag()
+            local_dist_an = self.euclidean_dist(local_features, local_features_negative).diag()
+        elif self.metric == 'cosine':
+            local_dist_ap = self.cosine_dist(local_features, local_features_positive).diag()
+            local_dist_an = self.cosine_dist(local_features, local_features_negative).diag()
         # Compute ranking hinge loss
         y = torch.ones_like(dist_an)
         global_loss = self.ranking_loss(dist_an, dist_ap, y)
-        local_loss = self.ranking_loss_local(local_dist_an,local_dist_ap, y)
+        local_loss = self.ranking_loss_local(local_dist_an, local_dist_ap, y)
+        
         if self.mutual:
-            return global_loss+local_loss,dist
-        return global_loss,local_loss
+            return global_loss + local_loss, dist
+        return global_loss, local_loss
+
 
 class CenterLoss(nn.Module):
     """Center loss.
-    
+
     Reference:
     Wen et al. A Discriminative Feature Learning Approach for Deep Face Recognition. ECCV 2016.
-    
+
     Args:
         num_classes (int): number of classes.
         feat_dim (int): feature dimension.
     """
-    def __init__(self, num_classes=10, feat_dim=2, use_gpu=True):
+
+    def __init__(self, num_classes=751, feat_dim=2048, use_gpu=True):
         super(CenterLoss, self).__init__()
         self.num_classes = num_classes
         self.feat_dim = feat_dim
@@ -392,24 +444,27 @@ class CenterLoss(nn.Module):
             x: feature matrix with shape (batch_size, feat_dim).
             labels: ground truth labels with shape (num_classes).
         """
+        assert x.size(0) == labels.size(0), "features.size(0) is not equal to labels.size(0)"
+
         batch_size = x.size(0)
         distmat = torch.pow(x, 2).sum(dim=1, keepdim=True).expand(batch_size, self.num_classes) + \
                   torch.pow(self.centers, 2).sum(dim=1, keepdim=True).expand(self.num_classes, batch_size).t()
-        distmat.addmm_(x, self.centers.t(),beta=1, alpha= -2)
+        distmat.addmm_(1, -2, x, self.centers.t())
 
         classes = torch.arange(self.num_classes).long()
         if self.use_gpu: classes = classes.cuda()
         labels = labels.unsqueeze(1).expand(batch_size, self.num_classes)
         mask = labels.eq(classes.expand(batch_size, self.num_classes))
 
-        dist = []
-        for i in range(batch_size):
-            value = distmat[i][mask[i]]
-            value = value.clamp(min=1e-12, max=1e+12) # for numerical stability
-            dist.append(value)
-        dist = torch.cat(dist)
-        loss = dist.mean()
-
+        dist = distmat * mask.float()
+        loss = dist.clamp(min=1e-12, max=1e+12).sum() / batch_size
+        #dist = []
+        #for i in range(batch_size):
+        #    value = distmat[i][mask[i]]
+        #    value = value.clamp(min=1e-12, max=1e+12)  # for numerical stability
+        #    dist.append(value)
+        #dist = torch.cat(dist)
+        #loss = dist.mean()
         return loss
     
 
@@ -420,21 +475,39 @@ class ReIdTotalLoss(nn.Module):
         self.loss_cfg = cfg.train.loss
         self.losses = nn.ModuleDict()
         self.weights = dict()
-
+        self.metric = cfg.model.metric
 
         if self.loss_cfg.metric.enabled:
             loss_func, weight, margin = self.loss_cfg.metric.loss_func, self.loss_cfg.metric.weight,  self.loss_cfg.metric.margin
             if loss_func == 'triplet-hard':
-                self.losses['metric_loss'] = TripletHardLoss(margin=margin)
-            self.weights['metric_loss'] = weight
+                if self.config.model.aligned:
+                    self.losses['global_loss'] = TripletHardLoss(margin=margin,metric=self.metric)
+                    self.losses['local_loss'] = TripletHardLoss(margin=margin,metric=self.metric)
+                    self.weights['global_loss'] = weight
+                    self.weights['local_loss'] = weight
+                else:
+                    self.losses['metric_loss'] = TripletHardLoss(margin=margin,metric=self.metric)
+                    self.weights['metric_loss'] = weight
+            elif loss_func == 'triplet-hard-aligned-reid':
+                if not self.config.model.aligned:
+                    raise 'Triplet-hard loss is not available when training aligned.Only triplet-hard-aligned-reid can be used as matric loss.'
+                self.losses['triplet-hard-aligned-reid'] = TripletHardLossAlignedReID(margin,mutual_flag=False,metric=self.metric)
+                self.weights['triplet-hard-aligned-reid'] = weight
+        
 
         if self.loss_cfg.id.enabled:
             num_classes = self.config.train.num_classes
             loss_func, weight= self.loss_cfg.id.loss_func, self.loss_cfg.id.weight
             if loss_func == 'cross-entropy-label-smooth':
                 epsilon = self.loss_cfg.id.epsilon
-                self.losses['id_loss'] = CrossEntropyLabelSmooth(num_classes=num_classes, epsilon=epsilon)
-            self.weights['id_loss'] = weight
+                self.losses['global_id_loss'] = CrossEntropyLabelSmooth(num_classes=num_classes, epsilon=epsilon)
+                if self.config.model.aligned:
+                    self.losses['local_id_loss'] = CrossEntropyLabelSmooth(num_classes=num_classes, epsilon=epsilon)
+            elif loss_func == 'arcface-loss':
+                self.losses['id_loss'] = ArcFaceLoss(self.config.model._global.feature_dim, self.config.train.num_classes)
+            self.weights['global_id_loss'] = weight
+            if self.config.model.aligned:
+                self.weights['local_id_loss'] = weight
 
         if self.loss_cfg.center.enabled:
             num_classes = self.config.train.num_classes
@@ -443,29 +516,37 @@ class ReIdTotalLoss(nn.Module):
             self.losses['center_loss'] = CenterLoss(num_classes=num_classes, feat_dim=feat_dim)
             self.weights['center_loss'] = weight
 
-        if self.config.model.aligned:
-            loss_func, weight, margin = self.loss_cfg.metric.loss_func, self.loss_cfg.metric.weight,  self.loss_cfg.metric.margin
-            if loss_func != 'triplet-hard-aligned-reid':
-                raise 'Triplet-hard loss is not available when training aligned.Only triplet-hard-aligned-reid can be used as matric loss.'
-            self.losses['triplet-hard-aligned-reid'] = TripletHardLossAlignedReID(margin,mutual_flag=False)
-            self.weights['triplet-hard-aligned-reid'] = weight
+            
 
 
         
-    def forward(self,predicted_pids, global_features, local_fuetures , pids, **kwargs):
+    def forward(self,global_predicted_pids,local_predicted_pids, global_features, local_features , pids, **kwargs):
         total_loss = 0.0
         loss_dict = {}
 
         for name, loss_func in self.losses.items():
 
             if isinstance(loss_func,CrossEntropyLoss) or isinstance(loss_func,CrossEntropyLabelSmooth):
-                loss_value = loss_func(predicted_pids,pids)
-            elif isinstance(loss_func, TripletHardLoss):
+                if name=='global_id_loss':
+                  loss_value = loss_func(global_predicted_pids,pids)
+                elif name =='local_id_loss':
+                  loss_value = loss_func(local_predicted_pids,pids)
+            elif isinstance(loss_func,ArcFaceLoss):
                 loss_value = loss_func(global_features,pids)
+            elif isinstance(loss_func, TripletHardLoss):
+                if self.config.model.aligned:
+                    if name == 'global_loss':
+                        loss_value = loss_func(global_features,pids)
+                    elif name == "local_loss":
+                        loss_value = loss_func(local_features,pids)
+                    else:
+                        raise "!!!!!!!!!!!!!!!!!!"
+                else:
+                    loss_value = loss_func(global_features,pids)
             elif isinstance(loss_func,CenterLoss):
                 loss_value = loss_func(global_features,pids)
             elif isinstance(loss_func, TripletHardLossAlignedReID):
-                global_loss, local_loss = loss_func(global_features, pids, local_fuetures)
+                global_loss, local_loss = loss_func(global_features, pids, local_features)
                 loss_value = global_loss + local_loss
             else:
                 raise ValueError(f"Unknown loss function type for {name}")

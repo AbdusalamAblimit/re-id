@@ -7,7 +7,7 @@ class Market1501():
     """
     """
     dataset_dir = 'Market-1501-v15.09.15'
-    def __init__(self,root='dataset',**kwargs):
+    def __init__(self,root='/media/data/dataset',**kwargs):
         self.dataset_dir = os.path.join(root,self.dataset_dir)
         self.train_dir = os.path.join(self.dataset_dir,'bounding_box_train')
         self.query_dir = os.path.join(self.dataset_dir,'query')

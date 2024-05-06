@@ -107,3 +107,42 @@ def save_combined_features(x, feature_map, base_dir='debug/feature_map'):
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f'sample_{i}.png'), bbox_inches='tight')
         plt.close()
+
+
+def cosine_dist(x, y):
+    """
+    Compute the cosine distance between two sets of vectors.
+    
+    Args:
+      x: PyTorch Tensor, shape [m, d]
+      y: PyTorch Tensor, shape [n, d]
+      
+    Returns:
+      dist: PyTorch Tensor, shape [m, n] where dist[i][j] is the cosine distance between x[i] and y[j]
+    """
+    # Normalize each vector to have unit norm
+    x_norm = torch.nn.functional.normalize(x, p=2, dim=1)
+    y_norm = torch.nn.functional.normalize(y, p=2, dim=1)
+    
+    # Compute the cosine similarity
+    cosine_similarity = torch.mm(x_norm, y_norm.t())
+    
+    # Convert cosine similarity to cosine distance
+    dist = 1 - cosine_similarity
+    return dist
+
+def euclidean_dist(x, y):
+    """
+    Args:
+      x: pytorch Variable, with shape [m, d]
+      y: pytorch Variable, with shape [n, d]
+    Returns:
+      dist: pytorch Variable, with shape [m, n]
+    """
+    m, n = x.size(0), y.size(0)
+    xx = torch.pow(x, 2).sum(1, keepdim=True).expand(m, n)
+    yy = torch.pow(y, 2).sum(1, keepdim=True).expand(n, m).t()
+    dist = xx + yy
+    dist.addmm_(1, -2, x, y.t())
+    dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+    return dist

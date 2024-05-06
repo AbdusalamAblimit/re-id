@@ -1,7 +1,7 @@
 model:
+  neck: bnneck
   _global:
     feature_dim: 2048
-    neck: bnneck
   local:
     hrnet:
       lock: true
@@ -16,7 +16,7 @@ model:
 dataset: 'Market1501'
 
 
-random_seed: 42
+random_seed: 1127
 
 width: 192
 height: 256 
@@ -36,6 +36,7 @@ train:
       margin: 0.3
     id:
       enabled: true
+      both: true    # local feature
       loss_func: cross-entropy-label-smooth # cross-entropy-label-smooth, cross-entropy
       weight: 1.0
       epsilon: 0.1 # available when using cross-entropy-label-smooth
@@ -62,7 +63,7 @@ train:
   
 test:
   pin_memory: false
-  num_workers: 8
+  num_workers: 1
   batch_size: 64
   distance: global # global,local,global_local
   ranks: [1,3,5,10,20]

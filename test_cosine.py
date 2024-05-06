@@ -16,30 +16,34 @@ from loguru import logger
 from IPython import embed
 
 
-def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only_local = False):
-    # if feature vector is numpy, you should use 'torch.tensor' transform it to tensor
+def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat=None, only_local=False):
+    # Normalize features to unit length
+    # probFea = F.normalize(probFea, p=2, dim=1)
+    # galFea = F.normalize(galFea, p=2, dim=1)
+
     query_num = probFea.size(0)
     all_num = query_num + galFea.size(0)
+
     if only_local:
         original_dist = local_distmat
     else:
-        feat = torch.cat([probFea,galFea])
+        feat = torch.cat([probFea, galFea])
         logger.info('using GPU to compute original distance')
-        distmat = torch.pow(feat,2).sum(dim=1, keepdim=True).expand(all_num,all_num) + \
-                      torch.pow(feat, 2).sum(dim=1, keepdim=True).expand(all_num, all_num).t()
-        distmat.addmm_(feat,feat.t(),beta=1,alpha=-2)
-        original_dist = distmat.numpy()
-        del feat
-        if not local_distmat is None:
-            original_dist = original_dist + local_distmat
+        # Compute cosine similarity and convert to distance
+        sim = torch.mm(feat, feat.t())
+        original_dist = 1 - sim  # Cosine distance
+        original_dist = original_dist.cpu().numpy()
+
+        if local_distmat is not None:
+            original_dist += local_distmat
+
     gallery_num = original_dist.shape[0]
     original_dist = np.transpose(original_dist / np.max(original_dist, axis=0))
     V = np.zeros_like(original_dist).astype(np.float16)
     initial_rank = np.argsort(original_dist).astype(np.int32)
 
     logger.info('starting re_ranking')
-    for i in range(all_num):
-        # k-reciprocal neighbors
+    for i in tqdm(range(all_num), 're-ranking'):
         forward_k_neigh_index = initial_rank[i, :k1 + 1]
         backward_k_neigh_index = initial_rank[forward_k_neigh_index, :k1 + 1]
         fi = np.where(backward_k_neigh_index == i)[0]
@@ -48,14 +52,11 @@ def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only
         for j in range(len(k_reciprocal_index)):
             candidate = k_reciprocal_index[j]
             candidate_forward_k_neigh_index = initial_rank[candidate, :int(np.around(k1 / 2)) + 1]
-            candidate_backward_k_neigh_index = initial_rank[candidate_forward_k_neigh_index,
-                                               :int(np.around(k1 / 2)) + 1]
+            candidate_backward_k_neigh_index = initial_rank[candidate_forward_k_neigh_index, :int(np.around(k1 / 2)) + 1]
             fi_candidate = np.where(candidate_backward_k_neigh_index == candidate)[0]
             candidate_k_reciprocal_index = candidate_forward_k_neigh_index[fi_candidate]
-            if len(np.intersect1d(candidate_k_reciprocal_index, k_reciprocal_index)) > 2 / 3 * len(
-                    candidate_k_reciprocal_index):
+            if len(np.intersect1d(candidate_k_reciprocal_index, k_reciprocal_index)) > 2 / 3 * len(candidate_k_reciprocal_index):
                 k_reciprocal_expansion_index = np.append(k_reciprocal_expansion_index, candidate_k_reciprocal_index)
-
         k_reciprocal_expansion_index = np.unique(k_reciprocal_expansion_index)
         weight = np.exp(-original_dist[i, k_reciprocal_expansion_index])
         V[i, k_reciprocal_expansion_index] = weight / np.sum(weight)
@@ -65,27 +66,21 @@ def re_ranking(probFea, galFea, k1, k2, lambda_value, local_distmat = None, only
         for i in range(all_num):
             V_qe[i, :] = np.mean(V[initial_rank[i, :k2], :], axis=0)
         V = V_qe
-        del V_qe
-    del initial_rank
+
     invIndex = []
     for i in range(gallery_num):
         invIndex.append(np.where(V[:, i] != 0)[0])
 
     jaccard_dist = np.zeros_like(original_dist, dtype=np.float16)
-
     for i in range(query_num):
         temp_min = np.zeros(shape=[1, gallery_num], dtype=np.float16)
         indNonZero = np.where(V[i, :] != 0)[0]
         indImages = [invIndex[ind] for ind in indNonZero]
         for j in range(len(indNonZero)):
-            temp_min[0, indImages[j]] = temp_min[0, indImages[j]] + np.minimum(V[i, indNonZero[j]],
-                                                                               V[indImages[j], indNonZero[j]])
+            temp_min[0, indImages[j]] = temp_min[0, indImages[j]] + np.minimum(V[i, indNonZero[j]], V[indImages[j], indNonZero[j]])
         jaccard_dist[i] = 1 - temp_min / (2 - temp_min)
 
     final_dist = jaccard_dist * (1 - lambda_value) + original_dist * lambda_value
-    del original_dist
-    del V
-    del jaccard_dist
     final_dist = final_dist[:query_num, query_num:]
     return final_dist
 
@@ -186,7 +181,7 @@ def meta_local_dist(x, y, aligned):
   Returns:
     dist: scalar
   """
-    eu_dist = compute_dist(x, y, 'euclidean')
+    eu_dist = compute_dist(x, y, 'cosine')
     dist_mat = (np.exp(eu_dist) - 1.) / (np.exp(eu_dist) + 1.)
     if aligned:
         dist = shortest_dist(dist_mat[np.newaxis])[0]
@@ -225,7 +220,7 @@ def parallel_local_dist(x, y, aligned):
     x = x.reshape([M * m, d])
     y = y.reshape([N * n, d])
     # shape [M * m, N * n]
-    dist_mat = compute_dist(x, y, type='euclidean')
+    dist_mat = compute_dist(x, y, type='cosine')
     dist_mat = (np.exp(dist_mat) - 1.) / (np.exp(dist_mat) + 1.)
     # shape [M * m, N * n] -> [M, m, N, n] -> [m, n, M, N]
     dist_mat = dist_mat.reshape([M, m, N, n]).transpose([1, 3, 0, 2])
@@ -324,7 +319,7 @@ def evaluate(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
     all_cmc = []
     all_AP = []
     num_valid_q = 0. # number of valid query
-    for q_idx in range(num_q):
+    for q_idx in tqdm(range(num_q),'Computing'):
         # get query pid and camid
         q_pid = q_pids[q_idx]
         q_camid = q_camids[q_idx]
@@ -376,10 +371,14 @@ def test(model, queryloader, galleryloader,cfg):
 
 
             features, local_features = model(imgs)
-
+            
 
             features = features.data.cpu()
             local_features = local_features.data.cpu()
+
+            # tf = torch.cat((features, local_features), dim=1)
+            # qf.append(tf)
+
             qf.append(features)
             lqf.append(local_features)
             q_pids.extend(pids)
@@ -400,6 +399,10 @@ def test(model, queryloader, galleryloader,cfg):
 
             features = features.data.cpu()
             local_features = local_features.data.cpu()
+
+            # tf = torch.cat((features, local_features), dim=1)
+
+            # gf.append(tf)
             gf.append(features)
             lgf.append(local_features)
             g_pids.extend(pids)
@@ -415,9 +418,10 @@ def test(model, queryloader, galleryloader,cfg):
     qf = 1. * qf / (torch.norm(qf, 2, dim = -1, keepdim=True).expand_as(qf) + 1e-12)
     gf = 1. * gf / (torch.norm(gf, 2, dim = -1, keepdim=True).expand_as(gf) + 1e-12)
     m, n = qf.size(0), gf.size(0)
-    distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
-              torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
-    distmat.addmm_(qf, gf.t(),beta=1,alpha=-2)
+    # distmat = torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n) + \
+    #           torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
+    # distmat.addmm_(qf, gf.t(),beta=1,alpha=-2)
+    distmat = 1 - torch.mm(qf, gf.t())  # torch.mm计算点积，1-点积得到余弦距离
     distmat = distmat.numpy()
 
     if not cfg.test.distance== 'global':
@@ -441,33 +445,35 @@ def test(model, queryloader, galleryloader,cfg):
     for r in cfg.test.ranks:
         logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
     logger.info("------------------")
+    for k1 in [ 30, 40]:
+        for k2 in [6]:
+            for lambda_value in [0.3]:
+                if cfg.test.reranking:
+                    if cfg.test.distance == 'global':
+                        logger.info("Only using global branch for reranking")
+                        distmat = re_ranking(qf,gf,k1=k1, k2=k2, lambda_value=lambda_value)
+                    else:
+                        local_qq_distmat = low_memory_local_dist(lqf.numpy(), lqf.numpy(),aligned= cfg.model.aligned)
+                        local_gg_distmat = low_memory_local_dist(lgf.numpy(), lgf.numpy(),aligned= cfg.model.aligned)
+                        local_dist = np.concatenate(
+                            [np.concatenate([local_qq_distmat, local_distmat], axis=1),
+                            np.concatenate([local_distmat.T, local_gg_distmat], axis=1)],
+                            axis=0)
+                        if cfg.test.distance == 'local':
+                            logger.info("Only using local branch for reranking")
+                            distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=True)
+                        elif cfg.test.distance == 'global_local':
+                            logger.info("Using global and local branches for reranking")
+                            distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=False)
+                    logger.info("Computing CMC and mAP for re_ranking")
+                    cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
 
-    if cfg.test.reranking:
-        if cfg.test.distance == 'global':
-            logger.info("Only using global branch for reranking")
-            distmat = re_ranking(qf,gf,k1=30, k2=6, lambda_value=0.3)
-        else:
-            local_qq_distmat = low_memory_local_dist(lqf.numpy(), lqf.numpy(),aligned= cfg.model.aligned)
-            local_gg_distmat = low_memory_local_dist(lgf.numpy(), lgf.numpy(),aligned= cfg.model.aligned)
-            local_dist = np.concatenate(
-                [np.concatenate([local_qq_distmat, local_distmat], axis=1),
-                 np.concatenate([local_distmat.T, local_gg_distmat], axis=1)],
-                axis=0)
-            if cfg.test.distance == 'local':
-                logger.info("Only using local branch for reranking")
-                distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=True)
-            elif cfg.test.distance == 'global_local':
-                logger.info("Using global and local branches for reranking")
-                distmat = re_ranking(qf,gf,k1=20,k2=6,lambda_value=0.3,local_distmat=local_dist,only_local=False)
-        logger.info("Computing CMC and mAP for re_ranking")
-        cmc, mAP = evaluate(distmat, q_pids, g_pids, q_camids, g_camids)
-
-        logger.info("Results ----------")
-        logger.info("mAP(RK): {:.1%}".format(mAP))
-        logger.info("CMC curve(RK)")
-        for r in cfg.test.ranks:
-            logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
-        logger.info("------------------")
+                    logger.info("Results ----------")
+                    logger.info("mAP(RK): {:.1%}".format(mAP))
+                    logger.info(f"CMC curve(RK, k1={k1},k2={k2},lambda={lambda_value})")
+                    for r in cfg.test.ranks:
+                        logger.info("Rank-{:<3}: {:.1%}".format(r, cmc[r - 1]))
+                    logger.info("------------------")
     return cmc,mAP
 
 
@@ -489,7 +495,10 @@ def test_concat(model, queryloader, galleryloader,cfg):
 
             features = features.data.cpu()
             local_features = local_features.data.cpu()
-            qf.append(features)
+            features = local_features
+            tf = torch.cat((features, local_features), dim=1)
+            qf.append(tf)
+            # qf.append(features)
             lqf.append(local_features)
             q_pids.extend(pids)
             q_camids.extend(camids)
@@ -509,6 +518,7 @@ def test_concat(model, queryloader, galleryloader,cfg):
 
             features = features.data.cpu()
             local_features = local_features.data.cpu()
+            features = local_features
             gf.append(features)
             lgf.append(local_features)
             g_pids.extend(pids)
@@ -557,7 +567,7 @@ def test_concat(model, queryloader, galleryloader,cfg):
     if cfg.test.reranking:
         if cfg.test.distance == 'global':
             logger.info("Only using global branch for reranking")
-            distmat = re_ranking(qf,gf,k1=30, k2=6, lambda_value=0.3)
+            distmat = re_ranking(qf,gf,k1=20, k2=6, lambda_value=0.3)
         else:
             local_qq_distmat = torch.pow(lqf, 2).sum(dim=1, keepdim=True).expand(m, m) + \
                                torch.pow(lqf, 2).sum(dim=1, keepdim=True).expand(m, m).t()

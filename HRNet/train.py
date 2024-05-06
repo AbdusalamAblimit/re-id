@@ -20,7 +20,7 @@ def create_model(num_joints, load_pretrain_weights=True):
     if load_pretrain_weights:
         # 载入预训练模型权重
         # 链接:https://pan.baidu.com/s/1Lu6mMAWfm_8GGykttFMpVw 提取码:f43o
-        weights_dict = torch.load("./pose_hrnet_w32_256x192.pth", map_location='cpu')
+        weights_dict = torch.load("./original_weights/imagenet-w32.pth", map_location='cpu')
 
         for k in list(weights_dict.keys()):
             # 如果载入的是imagenet权重，就删除无用权重
@@ -249,7 +249,7 @@ def main(args):
                                               print_freq=50, warmup=True,
                                               scaler=scaler)
         
-        print(f'Mean loss:{mean_loss}')
+        logger.info(f'Mean loss:{mean_loss}')
 
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -278,7 +278,7 @@ def main(args):
             'epoch': epoch}
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "./save_weights/model-{}.pth".format(epoch))
+        torch.save(save_files, f"{args.output_dir}/checkpoint-epoch{epoch}.pth")
     quit()
 
     # plot loss and lr curve
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     # keypoints点数
     parser.add_argument('--num-joints', default=17, type=int, help='num_joints')
     # 文件保存地址
-    parser.add_argument('--output-dir', default='./save_weights', help='path where to save')
+    parser.add_argument('--output-dir', default='./saved_checkpoints', help='path where to save')
     # 若需要接着上次训练，则指定上次训练保存权重文件地址
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     # 指定接着从哪个epoch数开始训练

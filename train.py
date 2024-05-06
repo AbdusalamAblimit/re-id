@@ -21,6 +21,7 @@ import time
 from loguru import logger
 import shutil
 from utils import read_sample_images
+from test import test_concat
 from torch.utils.tensorboard import SummaryWriter
 
 def main(cfg):
@@ -62,9 +63,9 @@ def main(cfg):
 
     transform_train = T.Compose([
         T.Resize([height,width]),
+        T.RandomHorizontalFlip(p=0.5),
         T.Pad(10),
         T.RandomCrop([height,width]),
-        T.RandomHorizontalFlip(p=0.5),
         T.ToTensor(),
         T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
         RandomErasing(probability=0.5,mean=[0.485,0.456,0.406])
@@ -90,7 +91,7 @@ def main(cfg):
     K = cfg.train.batch.k
 
     train_dataset = ImageDataset(data.train, transform = transform_train)
-    sampler = RandomIdentitySampler(data.train, num_instances = K)
+    sampler = RandomIdentitySampler(data.train,batch_size= P*K,num_instances=K)
     train_loader = DataLoader(train_dataset, batch_size = P*K, sampler = sampler, 
                               num_workers = cfg.train.num_workers, pin_memory = cfg.train.pin_memory,
                               drop_last= True)
@@ -101,35 +102,41 @@ def main(cfg):
     gallery_loader = DataLoader(gallery_dataset, batch_size = cfg.test.batch_size, shuffle = False,
                                 num_workers = cfg.test.num_workers, pin_memory = cfg.test.pin_memory)
 
-    if cfg.model.aligned and cfg.train.loss.metric.loss_func != 'triplet-hard-aligned-reid':
-        logger.warning(f'You can only use TripletHardAlignedReid as loss function when training is aligned. Metric loss function has been replaced with TripletHardAlignedReid.')
-        cfg.train.loss.metric.loss_func = 'triplet-hard-aligned-reid'
-    elif (not cfg.model.aligned) and  cfg.train.loss.metric.loss_func == 'triplet-hard-aligned-reid':
-        logger.warning(f'You can not use TripletHardAlignedReid as metric loss function when training is not aligned.Metric loss function has been replaced with TripletHard.')
-        cfg.train.loss.metric.loss_func = 'triplet-hard'
+    # if cfg.model.aligned and cfg.train.loss.metric.loss_func != 'triplet-hard-aligned-reid':
+    #     logger.warning(f'You can only use TripletHardAlignedReid as loss function when training is aligned. Metric loss function has been replaced with TripletHardAlignedReid.')
+    #     cfg.train.loss.metric.loss_func = 'triplet-hard-aligned-reid'
+    # elif (not cfg.model.aligned) and  cfg.train.loss.metric.loss_func == 'triplet-hard-aligned-reid':
+    #     logger.warning(f'You can not use TripletHardAlignedReid as metric loss function when training is not aligned.Metric loss function has been replaced with TripletHard.')
+    #     cfg.train.loss.metric.loss_func = 'triplet-hard'
 
+    device = 'cuda:0' if cfg.use_gpu else 'cpu'
     loss_func = ReIdTotalLoss(cfg)
     model = ReID(cfg)
+    # from model import Baseline
+    # model = Baseline(751)
+    model = model.to(device)
+
     lr_cfg = cfg.train.lr_scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr)
+    optim_cfg = cfg.train.optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr,weight_decay=optim_cfg.weight_decay)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones = lr_cfg.milestones, gamma = lr_cfg.gamma)
 
 
 
-    device = 'cuda:0' if cfg.use_gpu else 'cpu'
+    
     if cfg.resume:
         checkpoint = torch.load(cfg.resume, map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        cfg.start_epoch = checkpoint["epoch"]
+        cfg.train.start_epoch = checkpoint["epoch"]
 
     if device == 'cuda:0' and cfg.use_cudnn:
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark=True
         torch.backends.cudnn.deterministic = True
 
-    model = model.to(device)
+    
 
 
     if cfg.tensorboard.enabled:
@@ -137,16 +144,18 @@ def main(cfg):
         cfg.tb_writer = tb_writer
         sample = torch.rand([1,3,height,width],device = device)
         tb_writer.add_graph(model, sample)
-        sample_images = read_sample_images('./sample_images',transform_test,device)
+    sample_images = read_sample_images('./sample_images',transform_test,device)
     # embed()
-
     # test(model,query_loader,gallery_loader,cfg)
+    # test_concat(model,query_loader,gallery_loader,cfg)
     # embed()
+    # for tested_feature in cfg.test.features:
+    #     cmc,mAP = test(model,query_loader,gallery_loader,tested_feature,cfg)
     train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images)
     # embed()
     pass
 
-from test import test
+from test_new import test
 
 
 
@@ -168,15 +177,16 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
             epoch += 1
             pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}")
             loss_sums = {}  # 初始化损失累加字典
-            total_running_correct_samples = 0
+            global_total_running_correct_samples = 0
+            local_total_running_correct_samples = 0
             total_samples = 0
             for i,data in pbar:
                 imgs,pids,camids = data
                 imgs = imgs.to(device)
                 pids = pids.to(device)
-                outputs,global_features,local_features = model(imgs)
+                global_outputs,local_outputs,global_features,local_features = model(imgs)
 
-                loss,loss_dict = loss_func(outputs, global_features, local_features, pids)
+                loss,loss_dict = loss_func(global_outputs, local_outputs, global_features, local_features, pids)
 
 
                 optimizer.zero_grad()
@@ -194,9 +204,14 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 
                 # compute rank-1 by id
                 if cfg.train.loss.id.enabled:
-                    _, predicted = torch.max(outputs,1) 
-                    total_running_correct_samples += (predicted == pids).sum().item()
+                    _, global_predicted = torch.max(global_outputs,1) 
+                    global_total_running_correct_samples += (global_predicted == pids).sum().item()
+                    _, local_predicted = torch.max(local_outputs,1) 
+                    local_total_running_correct_samples += (local_predicted == pids).sum().item()
+
                     total_samples += pids.shape[0]
+
+
                 current_lr = optimizer.param_groups[0]['lr']
 
                 # create pbar information
@@ -204,9 +219,9 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                     'lr': current_lr
                 }
                 if cfg.train.loss.id.enabled:
-                    postfix_dict.update({'acc': total_running_correct_samples / total_samples})
-
-                
+                    postfix_dict.update({'global_acc': global_total_running_correct_samples / total_samples,
+                                         'local_acc': local_total_running_correct_samples / total_samples})
+                    
 
                 # update pbar information
                 postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
@@ -225,14 +240,17 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 for key,value in loss_sums.items():
                     cfg.tb_writer.add_scalar(key, value/len(pbar), epoch)
                 model.eval()
-                model.local_net.draw_feature_to_tensorboard(sample_images,cfg.tb_writer,f'epoch{epoch}-local')
+                with torch.no_grad():
+                    model.draw_feature_to_tensorboard(sample_images,cfg.tb_writer,f'epoch{epoch}-local')
             
             if epoch % evaluate_on_n_epochs == 0:
-                cmc,mAP = test(model,query_loader,gallery_loader,cfg)
-                if cfg.tensorboard.enabled:
-                    cfg.tb_writer.add_scalar('mAP',mAP,epoch)
-                    for r in cfg.test.ranks:
-                        cfg.tb_writer.add_scalar(f'rank-{r}',cmc[r-1],epoch)
+                for tested_feature in cfg.test.features:
+                    cmc,mAP = test(model,query_loader,gallery_loader,tested_feature,cfg)
+
+                # if cfg.tensorboard.enabled:
+                #     cfg.tb_writer.add_scalar('mAP',mAP,epoch)
+                #     for r in cfg.test.ranks:
+                #         cfg.tb_writer.add_scalar(f'rank-{r}',cmc[r-1],epoch)
                     
 
             if epoch % save_on_n_epochs ==0:
@@ -246,7 +264,6 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 saved_files_path = os.path.join(saved_files_dir,"checkpoint-epoch{}.pth".format(epoch))
                 torch.save(save_files, saved_files_path)
                 # logger.error('')
-                
     except KeyboardInterrupt:
         logger.error('Catched KeyboardInterrupt. Saving trained model...')
 
