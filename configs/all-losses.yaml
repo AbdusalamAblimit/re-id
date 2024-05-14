@@ -24,8 +24,8 @@ height: 256
 train:
   num_classes: 751
   batch:
-    p: 8
-    k: 6
+    p: 16
+    k: 4
   start_epoch: 0
   max_epochs: 200
   loss:

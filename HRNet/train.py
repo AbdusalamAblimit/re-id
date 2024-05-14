@@ -20,8 +20,8 @@ def create_model(num_joints, load_pretrain_weights=True):
     if load_pretrain_weights:
         # 载入预训练模型权重
         # 链接:https://pan.baidu.com/s/1Lu6mMAWfm_8GGykttFMpVw 提取码:f43o
-        weights_dict = torch.load("./original_weights/imagenet-w32.pth", map_location='cpu')
-
+        # weights_dict = torch.load("./original_weights/imagenet-w32.pth", map_location='cpu')
+        weights_dict = torch.load("pose_hrnet_w32_256x192.pth", map_location='cpu')
         for k in list(weights_dict.keys()):
             # 如果载入的是imagenet权重，就删除无用权重
             if ("head" in k) or ("fc" in k):
@@ -80,7 +80,8 @@ def merge_heatmaps(original_heatmaps, kps_weights, combined_keypoint_indexes):
             weight = kps_weights[index]
             combined_heatmaps[:, i, :, :] += original_heatmaps[:, index, :, :] * weight
         # 归一化合并后的热力图
-        combined_heatmaps[:, i, :, :] /= np.sum(kps_weights[valid_indexes])
+        if  np.sum(kps_weights[valid_indexes]) > 1e-7:
+            combined_heatmaps[:, i, :, :] /= np.sum(kps_weights[valid_indexes])
     return combined_heatmaps
 
 def calculate_mse(output, target):
@@ -91,16 +92,13 @@ def calculate_mse(output, target):
 
 def eval(data_loader):
     kps_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5]
-    combined_keypoint_indexes=[[0,1,2,3,4],
-                 [5,6,11,12],
-                 [5,7,9],[6,8,10],
-                 [11,13,15],[12,14,16]]
+    combined_keypoint_indexes=[[16,14],[14,12],[17,15],[15,13],[12,13],[6,12],[7,13],[6,7],[6,8],[7,9],[8,10],[9,11],[2,3],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7]]
     oroginal_model = create_model(17)
-    new_model = create_model(6)
+    new_model = create_model(19)
     original_weight_path = './model-17-0.pth'
-    new_weight_path = './model-6-20.pth'
-    original_checkpoint = torch.load(original_weight_path, map_location='cpu')
-    oroginal_model.load_state_dict(original_checkpoint['model'])
+    new_weight_path = 'saved_checkpoints/checkpoint-epoch50.pth'
+    # original_checkpoint = torch.load(original_weight_path, map_location='cpu')
+    # oroginal_model.load_state_dict(original_checkpoint['model'])
     new_checkpoint = torch.load(new_weight_path, map_location='cpu')
     new_model.load_state_dict(new_checkpoint['model'])
     oroginal_model = oroginal_model.to('cuda:0')
@@ -208,8 +206,8 @@ def main(args):
                                       pin_memory=True,
                                       num_workers=nw,
                                       collate_fn=val_dataset.collate_fn)
-    # eval(val_data_loader)
-
+    eval(val_data_loader)
+    return
     # create model
     model = create_model(num_joints=args.num_joints)
     # logger.info(model)
@@ -241,6 +239,17 @@ def main(args):
     train_loss = []
     learning_rate = []
     val_map = []
+
+
+    if args.eval_only:
+        # evaluate on the test dataset
+        coco_info = utils.evaluate(model, val_data_loader, device=device,
+                                   flip=True, flip_pairs=person_kps_info["flip_pairs"])
+
+
+        print(coco_info)
+        return
+
 
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch, logger.infoing every 50 iterations
@@ -301,7 +310,7 @@ if __name__ == "__main__":
     # 训练设备类型
     parser.add_argument('--device', default='cuda:0', help='device')
     # 训练数据集的根目录(coco2017)
-    parser.add_argument('--data-path', default='data/coco2017', help='dataset')
+    parser.add_argument('--data-path', default='/media/data/dataset/coco2017', help='dataset')
     # COCO数据集人体关键点信息
     parser.add_argument('--keypoints-path', default="./person_keypoints.json", type=str,
                         help='person_keypoints.json path')
@@ -339,6 +348,9 @@ if __name__ == "__main__":
 
     # 是否组合人体关键点
     parser.add_argument("--combine-keypoints", action="store_true", help="Combine keypoints to reduce the number of heatmaps. If you turn on this option, the model can't predict the keypoints.")
+
+    parser.add_argument("--eval-only", action="store_true")
+
 
     args = parser.parse_args()
     logger.info(args)

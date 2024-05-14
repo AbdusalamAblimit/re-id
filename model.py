@@ -11,7 +11,6 @@ from utils import save_combined_features,save_combined_features_to_tensorboard,U
 
 
 
-
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
@@ -230,6 +229,90 @@ class FeatureFusion(nn.Module):
 
 
 
+from ibn.resnet import build_resnet_backbone
+
+class BaseNet(nn.Module):
+    def __init__(self, resnet):
+        super(BaseNet, self).__init__()
+        self.conv1 = resnet.conv1
+        self.bn1 = resnet.bn1
+        self.relu = resnet.relu
+        self.maxpool = resnet.maxpool
+        self.layer1 = resnet.layer1
+        # Assuming that NL_1 and its indices are necessary here
+        self.NL_1 = resnet.NL_1 if hasattr(resnet, 'NL_1') else None
+        self.NL_1_idx = resnet.NL_1_idx if hasattr(resnet, 'NL_1_idx') else []
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        
+        NL1_counter = 0
+        if len(self.NL_1_idx) == 0:
+            self.NL_1_idx = [-1]
+        for i in range(len(self.layer1)):
+            x = self.layer1[i](x)
+            if i == self.NL_1_idx[NL1_counter]:
+                _, C, H, W = x.shape
+                x = self.NL_1[NL1_counter](x)
+                NL1_counter += 1
+        return x
+
+
+
+class ContinuedNet(nn.Module):
+    def __init__(self, resnet):
+        super(ContinuedNet, self).__init__()
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+        
+        # Including Non-local modules and their indices for each layer if available
+        self.NL_2 = resnet.NL_2
+        self.NL_2_idx = resnet.NL_2_idx
+        self.NL_3 = resnet.NL_3
+        self.NL_3_idx = resnet.NL_3_idx
+        self.NL_4 = resnet.NL_4
+        self.NL_4_idx = resnet.NL_4_idx
+
+    def forward(self, x):
+        # layer 2
+        NL2_counter = 0
+        if len(self.NL_2_idx) == 0:
+            self.NL_2_idx = [-1]
+        for i in range(len(self.layer2)):
+            x = self.layer2[i](x)
+            if i == self.NL_2_idx[NL2_counter]:
+                _, C, H, W = x.shape
+                x = self.NL_2[NL2_counter](x)
+                NL2_counter += 1
+
+        # layer 3
+        NL3_counter = 0
+        if len(self.NL_3_idx) == 0:
+            self.NL_3_idx = [-1]
+        for i in range(len(self.layer3)):
+            x = self.layer3[i](x)
+            if i == self.NL_3_idx[NL3_counter]:
+                _, C, H, W = x.shape
+                x = self.NL_3[NL3_counter](x)
+                NL3_counter += 1
+
+        # layer 4
+        NL4_counter = 0
+        if len(self.NL_4_idx) == 0:
+            self.NL_4_idx = [-1]
+        for i in range(len(self.layer4)):
+            x = self.layer4[i](x)
+            if i == self.NL_4_idx[NL4_counter]:
+                _, C, H, W = x.shape
+                x = self.NL_4[NL4_counter](x)
+                NL4_counter += 1
+
+        return x
+
 class ReID(nn.Module):
     def __init__(self,cfg) -> None:
         super(ReID,self).__init__()
@@ -237,8 +320,6 @@ class ReID(nn.Module):
         self.in_planes = cfg.model._global.feature_dim
         self.neck = cfg.model.neck
         self.num_classes = cfg.train.num_classes
-
-        self.fusion_module = FeatureFusion(input_dim=4096, output_dim=2048)  # 特征融合模块
 
         if cfg.model.aligned:
             self.hrnet = self._init_hrnet(cfg.model.local.hrnet)
@@ -280,7 +361,7 @@ class ReID(nn.Module):
         # embed()
         f = self.base(x)
         
-        
+        # embed()
         gf = self.global_net(f)
         # embed()
         # gf = F.max_pool2d(gf,gf.size()[2:])
@@ -317,21 +398,59 @@ class ReID(nn.Module):
                 fy = self.local_classifier(lf_after_bnneck)
         return gy,fy,gf,lf
 
+
+    def freeze_backbone(self):
+        logger.info("Freezed the backbone.")
+        for param in self.base.parameters():
+            param.requires_grad = False
+        for param in self.global_net.parameters():
+            param.requires_grad = False
+        if self.cfg.model.aligned:
+            for param in self.local_net.parameters():
+                param.requires_grad = False
+    def unfreeze_backbone(self):
+        logger.info("Unfreezed the backbone.")
+        for param in self.base.parameters():
+                param.requires_grad = True
+        for param in self.global_net.parameters():
+                param.requires_grad = True
+        if self.cfg.model.aligned:
+            for param in self.local_net.parameters():
+                param.requires_grad = True
+
     def _init_color_feature_extractor(self):
+        backbone = self.cfg.model.backbone
+        if backbone == 'resnet50':
         # 初始化ResNet50并保留到layer1的部分
-        model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
-        # 提取ResNet50直到layer1的部分
-        layers = list(model.children())[:5]  # 包括layer1
-        color_feature_extractor = nn.Sequential(*layers)
-        return color_feature_extractor
+            model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
+            layers = list(model.children())[:5]  # 包括layer1
+            model = nn.Sequential(*layers)
+        elif backbone == 'ibn50':
+            model = build_resnet_backbone(depth='50x')
+            model = BaseNet(model)
+        elif backbone == 'ibn101':
+            model = build_resnet_backbone(depth='101x')
+            model = BaseNet(model)
+        else:
+            raise f'Wrong backbone name: {backbone}'
+        return model
 
     def _init_resnet_continued(self):
-        # 初始化从ResNet50的layer2开始的部分
-        model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
-        # 提取从layer2到倒数第三层的部分
-        layers = list(model.children())[5:-2]  # 从layer2开始，不包括最后的全局平均池化和fc层
-        resnet_continued = nn.Sequential(*layers)
-        return resnet_continued
+        backbone = self.cfg.model.backbone
+        if backbone == 'resnet50':
+            model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
+            layers = list(model.children())[5:-2]
+            model = nn.Sequential(*layers)
+        elif backbone == 'ibn50':
+            model = build_resnet_backbone('50x')
+            model = ContinuedNet(model)
+        elif backbone == 'ibn101':
+            model = build_resnet_backbone('101x')
+            model = ContinuedNet(model)
+        else:
+            raise f'Wrong backbone name: {backbone}'
+        return model
+        
     
     
     def _init_hrnet(self,hrnet_cfg):

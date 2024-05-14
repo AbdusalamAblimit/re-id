@@ -1,0 +1,89 @@
+model:
+  neck: bnneck
+  _global:
+    feature_dim: 2048
+
+  
+  local:
+    hrnet:
+      lock: true
+      pretrained:
+        enabled: true
+        path: HRNet/original_weights/hrnet-28c-line.pth
+      num_joints: 28
+  aligned: true
+  metric: cosine # euclidean or cosine
+
+    
+
+dataset:
+  root: '/media/data/dataset'
+  dir: 'Market-1501-v15.09.15'
+  name: 'Market1501'
+
+random_seed: 1127
+
+width: 192
+height: 256 
+
+train:
+  num_classes: 751
+  batch:
+    p: 16
+    k: 4
+  start_epoch: 0
+  max_epochs: 240
+  loss:
+    metric:
+      enabled: true
+      loss_func: triplet-hard # triplet, triplet-hard, triplet-hard-aligned-reid
+      weight: 1.0
+      margin: 0.2
+    id:
+      enabled: true
+      loss_func: cross-entropy-label-smooth # cross-entropy-label-smooth, cross-entropy, arcface-loss
+      weight: 1.0
+      epsilon: 0.1 # available when using cross-entropy-label-smooth
+    center:
+      enabled: false
+      weight: 0.001
+
+  pin_memory: true
+  num_workers: 0
+
+  eval_on_n_epochs: 20
+  save_on_n_epochs: 240
+
+  
+  warmup:
+    enabled: true
+    iters: 10
+    init_lr: 0.000035
+  lr_scheduler:  # MultiStepLR
+    init_lr: 0.00035
+    milestones: [40, 70, 100,130,150,170]
+    gamma: 0.3
+  optimizer:
+    name: adam
+    weight_decay: 0.0001
+  
+  
+test:
+  pin_memory: true
+  num_workers: 0
+  batch_size: 16
+  distance: global # global,local,global_local
+  ranks: [1,3,5,10,20]
+  reranking: false
+  features: ['concat']
+use_gpu: true
+
+use_cudnn: true
+
+name: margin-0.2-decay-0.0001
+
+output_root_dir: outputs/0507test
+
+
+tensorboard:
+  enabled: false

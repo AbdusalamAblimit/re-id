@@ -5,7 +5,7 @@ RUN apt-get update && apt-get upgrade -y && \
         git \
         python3 \
         python-is-python3 \
-        python3-pip
+        pip
 
 
 RUN cd ~ && \

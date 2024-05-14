@@ -3,7 +3,7 @@
 
 import torch
 
-from data_manager import Market1501
+from data_manager import Market1501,MSMT17_V1
 from dataset import ImageDataset
 from torchvision import transforms as T
 from torch.utils.data import DataLoader
@@ -60,6 +60,8 @@ def main(cfg):
 
     width = cfg.width
     height = cfg.height
+    
+    from trainsforms import PassRandomErasing
 
     transform_train = T.Compose([
         T.Resize([height,width]),
@@ -68,20 +70,25 @@ def main(cfg):
         T.RandomCrop([height,width]),
         T.ToTensor(),
         T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
-        RandomErasing(probability=0.5,mean=[0.485,0.456,0.406])
+        # RandomErasing(probability=1.0,mean=[0.485,0.456,0.406])
+        PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
+
     ])
 
 
     transform_test = T.Compose([
         T.Resize([height, width]),
         T.ToTensor(),
-        T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225])
+        T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
+        # RandomErasing(probability=1.0,mean=[0.485,0.456,0.406])
+        PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
     ])
 
 
-    if cfg.dataset == 'Market1501':
-        data = Market1501()
-
+    if cfg.dataset.name == 'Market1501':
+        data = Market1501(cfg.dataset.root, cfg.dataset.dir)
+    elif cfg.dataset.name == 'MSMT17':
+        data = MSMT17_V1(cfg.dataset.root, cfg.dataset.dir)
     train_dataset = ImageDataset(data.train, transform=transform_train)
     query_dataset = ImageDataset(data.query, transform=transform_test)
     gallery_dataset = ImageDataset(data.gallery, transform=transform_test)
@@ -120,7 +127,13 @@ def main(cfg):
     optim_cfg = cfg.train.optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr = lr_cfg.init_lr,weight_decay=optim_cfg.weight_decay)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones = lr_cfg.milestones, gamma = lr_cfg.gamma)
-
+    optimizer_center = None
+    if cfg.train.loss.center.enabled:
+        optimizer_center_global = torch.optim.SGD(loss_func.losses['global_center_loss'].parameters(), lr=cfg.train.loss.center.lr)
+        optimizer_center_local = None
+        if cfg.model.aligned:
+            optimizer_center_local = torch.optim.SGD(loss_func.losses['local_center_loss'].parameters(), lr=cfg.train.loss.center.lr)
+        optimizer_center = [optimizer_center_global,optimizer_center_local]
 
 
     
@@ -151,7 +164,12 @@ def main(cfg):
     # embed()
     # for tested_feature in cfg.test.features:
     #     cmc,mAP = test(model,query_loader,gallery_loader,tested_feature,cfg)
-    train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images)
+    if not cfg.test_only:
+        train(model, loss_func, optimizer,optimizer_center , scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images)
+    else:
+        for tested_feature in cfg.test.features:
+            test(model,query_loader,gallery_loader,tested_feature,cfg)
+
     # embed()
     pass
 
@@ -160,12 +178,14 @@ from test_new import test
 
 
 
-def train(model, loss_func, optimizer, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images = None):
+def train(model, loss_func, optimizer,optimizer_center, scheduler, device, train_loader, query_loader, gallery_loader, cfg, sample_images = None):
     start_epoch = cfg.train.start_epoch
     max_epochs = cfg.train.max_epochs
     evaluate_on_n_epochs = cfg.train.eval_on_n_epochs
     save_on_n_epochs = cfg.train.save_on_n_epochs
     warmup = cfg.train.warmup
+    
+    model.freeze_backbone()
 
     if warmup.enabled:
         warmup.lr_growth = (cfg.train.lr_scheduler.init_lr - warmup.init_lr) / warmup.iters
@@ -190,8 +210,25 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
 
 
                 optimizer.zero_grad()
+                if optimizer_center is not None:
+                    optimizer_center[0].zero_grad()
+                    if optimizer_center[1] is not None:
+                        optimizer_center[1].zero_grad()
+
                 loss.backward()
                 optimizer.step()
+                if optimizer_center is not None:
+                    optimizer_center_global = optimizer_center[0]
+                    center_loss_weight = cfg.train.loss.center.weight
+                    for param in loss_func.losses["global_center_loss"].parameters():
+                        param.grad.data *= (1. / center_loss_weight)
+                    optimizer_center_global.step()
+                    if cfg.model.aligned:
+                        optimizer_center_local = optimizer_center[1]
+                        for param in loss_func.losses["local_center_loss"].parameters():
+                            param.grad.data *= (1. / center_loss_weight)
+                        optimizer_center_local.step()
+
                 # embed()
 
                 if i == 0:
@@ -206,8 +243,9 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 if cfg.train.loss.id.enabled:
                     _, global_predicted = torch.max(global_outputs,1) 
                     global_total_running_correct_samples += (global_predicted == pids).sum().item()
-                    _, local_predicted = torch.max(local_outputs,1) 
-                    local_total_running_correct_samples += (local_predicted == pids).sum().item()
+                    if cfg.model.aligned:
+                        _, local_predicted = torch.max(local_outputs,1) 
+                        local_total_running_correct_samples += (local_predicted == pids).sum().item()
 
                     total_samples += pids.shape[0]
 
@@ -219,10 +257,10 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                     'lr': current_lr
                 }
                 if cfg.train.loss.id.enabled:
-                    postfix_dict.update({'global_acc': global_total_running_correct_samples / total_samples,
-                                         'local_acc': local_total_running_correct_samples / total_samples})
-                    
-
+                    postfix_dict.update({'global_acc': global_total_running_correct_samples / total_samples})
+                    if cfg.model.aligned:
+                        postfix_dict.update({'local_acc': local_total_running_correct_samples / total_samples})
+                                         
                 # update pbar information
                 postfix_dict.update({key: value / (i + 1) for key, value in loss_sums.items()})
 
@@ -243,7 +281,7 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 with torch.no_grad():
                     model.draw_feature_to_tensorboard(sample_images,cfg.tb_writer,f'epoch{epoch}-local')
             
-            if epoch % evaluate_on_n_epochs == 0:
+            if epoch % evaluate_on_n_epochs == 0 and epoch >= cfg.train.start_to_test_on_epoch :
                 for tested_feature in cfg.test.features:
                     cmc,mAP = test(model,query_loader,gallery_loader,tested_feature,cfg)
 
@@ -252,6 +290,11 @@ def train(model, loss_func, optimizer, scheduler, device, train_loader, query_lo
                 #     for r in cfg.test.ranks:
                 #         cfg.tb_writer.add_scalar(f'rank-{r}',cmc[r-1],epoch)
                     
+
+            if epoch == 10:
+                model.unfreeze_backbone()
+
+
 
             if epoch % save_on_n_epochs ==0:
                 save_files = {
@@ -298,6 +341,7 @@ def load_config(args):
     config = to_namespace(config)
     if args.use_gpu: config.use_gpu = True
     if args.use_cpu: config.use_gpu = False
+    config.test_only = True if args.test_only else False
     if args.output_root_dir: config.output_root_dir = args.output_root_dir
     if args.name: config.name = args.name
     if args.max_epochs: config.max_epochs = args.max_epochs
@@ -314,6 +358,7 @@ def parse_args():
     parser.add_argument('--config', type=str, default='configs/baseline.yaml', help='Path to the configuration file.')
     parser.add_argument("--use-gpu", action="store_true")
     parser.add_argument("--use-cpu", action="store_true")
+    parser.add_argument("--test-only", action="store_true")
     parser.add_argument('--output-root-dir', help='Root directory where output files will be saved.')
     parser.add_argument('--name', help='Subdirectory name for saving output. The final output path will be {output-dir}/{name}/yyyy-MM-dd-HH-mm-ss.')
     parser.add_argument('--resume', type=str, help='resume from checkpoint')

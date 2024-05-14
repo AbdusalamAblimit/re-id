@@ -427,7 +427,7 @@ class CenterLoss(nn.Module):
         feat_dim (int): feature dimension.
     """
 
-    def __init__(self, num_classes=751, feat_dim=2048, use_gpu=True):
+    def __init__(self, num_classes=751, feat_dim=2048, use_gpu=True,metric='euclidean'):
         super(CenterLoss, self).__init__()
         self.num_classes = num_classes
         self.feat_dim = feat_dim
@@ -466,6 +466,22 @@ class CenterLoss(nn.Module):
         #dist = torch.cat(dist)
         #loss = dist.mean()
         return loss
+    
+    def euclidean_dist(self, x, y):
+        m, n = x.size(0), y.size(0)
+        xx = torch.pow(x, 2).sum(1, keepdim=True).expand(m, n)
+        yy = torch.pow(y, 2).sum(1, keepdim=True).expand(n, m).t()
+        dist = xx + yy
+        dist.addmm_(1, -2, x, y.t())
+        dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+        return dist
+
+    def cosine_dist(self, x, y):
+        x_norm = F.normalize(x, p=2, dim=1)
+        y_norm = F.normalize(y, p=2, dim=1)
+        cosine_similarity = torch.mm(x_norm, y_norm.t())
+        dist = 1 - cosine_similarity
+        return dist
     
 
 class ReIdTotalLoss(nn.Module):
@@ -513,10 +529,11 @@ class ReIdTotalLoss(nn.Module):
             num_classes = self.config.train.num_classes
             feat_dim = self.config.model._global.feature_dim
             weight = self.loss_cfg.center.weight
-            self.losses['center_loss'] = CenterLoss(num_classes=num_classes, feat_dim=feat_dim)
-            self.weights['center_loss'] = weight
-
-            
+            self.losses['global_center_loss'] = CenterLoss(num_classes=num_classes, feat_dim=feat_dim,metric='euclidean')
+            self.weights['global_center_loss'] = weight
+            if self.config.model.aligned:
+                self.losses['local_center_loss'] = CenterLoss(num_classes=num_classes, feat_dim=feat_dim,metric='euclidean')
+                self.weights['local_center_loss'] = weight
 
 
         
@@ -544,7 +561,13 @@ class ReIdTotalLoss(nn.Module):
                 else:
                     loss_value = loss_func(global_features,pids)
             elif isinstance(loss_func,CenterLoss):
-                loss_value = loss_func(global_features,pids)
+                if name == 'global_center_loss':
+                    loss_value = loss_func(global_features,pids)
+                elif name == 'local_center_loss':
+                    loss_value = loss_func(local_features,pids)
+                else:
+                    raise "!!!!!!!!!!!!!!!!!!"
+                
             elif isinstance(loss_func, TripletHardLossAlignedReID):
                 global_loss, local_loss = loss_func(global_features, pids, local_features)
                 loss_value = global_loss + local_loss

@@ -1,5 +1,6 @@
 model:
   neck: bnneck
+  backbone: ibn101
   _global:
     feature_dim: 2048
   local:

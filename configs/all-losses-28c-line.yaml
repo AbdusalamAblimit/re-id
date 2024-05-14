@@ -1,5 +1,6 @@
 model:
   neck: bnneck
+  backbone: ibn101
   _global:
     feature_dim: 2048
 
@@ -16,8 +17,14 @@ model:
 
     
 
-dataset: 'Market1501'
-
+dataset:
+  root: '/media/data/dataset'
+  dir: 'Market-1501-v15.09.15'
+  name: 'Market1501'
+# dataset:
+#   root: '/media/data/dataset'
+#   dir: 'MSMT17_V1'
+#   name: 'MSMT17'
 
 random_seed: 1127
 
@@ -36,31 +43,32 @@ train:
       enabled: true
       loss_func: triplet-hard # triplet, triplet-hard, triplet-hard-aligned-reid
       weight: 1.0
-      margin: 0.1
+      margin: 0.3
     id:
       enabled: true
       loss_func: cross-entropy-label-smooth # cross-entropy-label-smooth, cross-entropy, arcface-loss
       weight: 1.0
       epsilon: 0.1 # available when using cross-entropy-label-smooth
     center:
-      enabled: false
+      enabled: true
       weight: 0.001
+      lr: 0.5
 
   pin_memory: true
   num_workers: 4
-
+  start_to_test_on_epoch: 160
   eval_on_n_epochs: 10
   save_on_n_epochs: 40
 
   
   warmup:
     enabled: true
-    iters: 10
+    iters: 20
     init_lr: 0.000035
   lr_scheduler:  # MultiStepLR
     init_lr: 0.00035
     milestones: [40, 70, 100,130,150,170]
-    gamma: 0.3
+    gamma: 0.35
   optimizer:
     name: adam
     weight_decay: 0.0005
@@ -73,12 +81,12 @@ test:
   distance: global # global,local,global_local
   ranks: [1,3,5,10,20]
   reranking: false
-  features: ['global','local','concat']
+  features: ['concat']
 use_gpu: true
 
 use_cudnn: true
 
-name: test-cosine-no-center-test-triplethard
+name: mixed-ibn101-test-freeze-new-random-erease
 
 output_root_dir: outputs
 

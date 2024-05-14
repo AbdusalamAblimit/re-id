@@ -452,6 +452,28 @@ def draw_line_heatmap(heatmap, p1, p2, weight1, weight2, kernel_radius, kernel, 
     return heatmap
 
 
+
+
+def merge_heatmaps(original_heatmaps, kps_weights, combined_keypoint_indexes):
+    # 假设original_heatmaps的形状为(N, 17, H, W)，N为样本数量，17为关键点通道数，H和W为热力图的高度和宽度
+    # kps_weights形状为(17,)
+    # combined_keypoint_indexes为要合并的关键点索引列表
+    N, _, H, W = original_heatmaps.shape
+    num_combined_kps = len(combined_keypoint_indexes)
+    combined_heatmaps = np.zeros((N, num_combined_kps, H, W))
+    
+    for i, indexes in enumerate(combined_keypoint_indexes):
+        valid_indexes = [index for index in indexes if index < original_heatmaps.shape[1]]
+        # 使用有效的索引和对应的权重计算加权平均热力图
+        for index in valid_indexes:
+            weight = kps_weights[index]
+            combined_heatmaps[:, i, :, :] += original_heatmaps[:, index, :, :] * weight
+        # 归一化合并后的热力图
+        if  np.sum(kps_weights[valid_indexes]) > 1e-7:
+            combined_heatmaps[:, i, :, :] /= np.sum(kps_weights[valid_indexes])
+    return combined_heatmaps
+
+
 class KeypointToHeatMap(object):
     def __init__(self,
                  heatmap_hw: Tuple[int, int] = (256 // 4, 192 // 4),
@@ -468,6 +490,11 @@ class KeypointToHeatMap(object):
         self.kps_weights = keypoints_weights
         self.combine_keypoints = combine_keypoints
         self.combined_keypoint_indexes = combined_keypoint_indexes
+        # embed()
+        for i in range(len(combined_keypoint_indexes)):
+            for j in range(len(combined_keypoint_indexes[i])):
+                self.combined_keypoint_indexes[i][j]  = self.combined_keypoint_indexes[i][j] - 1
+
         self.skeleton = None
         if combine_keypoints:
             self.skeleton = []
@@ -509,43 +536,49 @@ class KeypointToHeatMap(object):
 
         heatmap = np.zeros((num_kps, self.heatmap_hw[0], self.heatmap_hw[1]), dtype=np.float32)
         heatmap_kps = (kps / 4 + 0.5).astype(int)  # round
-        if not self.combine_keypoints:
-            for kp_id in range(num_kps):
-                v = kps_weights[kp_id]
-                if v < 0.5:
-                    # 如果该点的可见度很低，则直接忽略
-                    continue
-                
-                x, y = heatmap_kps[kp_id]
-                ul = [x - self.kernel_radius, y - self.kernel_radius]  # up-left x,y
-                br = [x + self.kernel_radius, y + self.kernel_radius]  # bottom-right x,y
-                # 如果以xy为中心kernel_radius为半径的辐射范围内与heatmap没交集，则忽略该点(该规则并不严格)
-                if ul[0] > self.heatmap_hw[1] - 1 or \
-                        ul[1] > self.heatmap_hw[0] - 1 or \
-                        br[0] < 0 or \
-                        br[1] < 0:
-                    # If not, just return the image as is
-                    kps_weights[kp_id] = 0
-                    continue
+        # if not self.combine_keypoints:
+        for kp_id in range(num_kps):
+            v = kps_weights[kp_id]
+            if v < 0.5:
+                # 如果该点的可见度很低，则直接忽略
+                continue
+            
+            x, y = heatmap_kps[kp_id]
+            ul = [x - self.kernel_radius, y - self.kernel_radius]  # up-left x,y
+            br = [x + self.kernel_radius, y + self.kernel_radius]  # bottom-right x,y
+            # 如果以xy为中心kernel_radius为半径的辐射范围内与heatmap没交集，则忽略该点(该规则并不严格)
+            if ul[0] > self.heatmap_hw[1] - 1 or \
+                    ul[1] > self.heatmap_hw[0] - 1 or \
+                    br[0] < 0 or \
+                    br[1] < 0:
+                # If not, just return the image as is
+                kps_weights[kp_id] = 0
+                continue
 
-                # Usable gaussian range
-                # 计算高斯核有效区域（高斯核坐标系）
-                g_x = (max(0, -ul[0]), min(br[0], self.heatmap_hw[1] - 1) - ul[0])
-                g_y = (max(0, -ul[1]), min(br[1], self.heatmap_hw[0] - 1) - ul[1])
-                # image range
-                # 计算heatmap中的有效区域（heatmap坐标系）
-                img_x = (max(0, ul[0]), min(br[0], self.heatmap_hw[1] - 1))
-                img_y = (max(0, ul[1]), min(br[1], self.heatmap_hw[0] - 1))
+            # Usable gaussian range
+            # 计算高斯核有效区域（高斯核坐标系）
+            g_x = (max(0, -ul[0]), min(br[0], self.heatmap_hw[1] - 1) - ul[0])
+            g_y = (max(0, -ul[1]), min(br[1], self.heatmap_hw[0] - 1) - ul[1])
+            # image range
+            # 计算heatmap中的有效区域（heatmap坐标系）
+            img_x = (max(0, ul[0]), min(br[0], self.heatmap_hw[1] - 1))
+            img_y = (max(0, ul[1]), min(br[1], self.heatmap_hw[0] - 1))
 
-                if kps_weights[kp_id] > 0.5:
-                    # 将高斯核有效区域复制到heatmap对应区域
-                    heatmap[kp_id][img_y[0]:img_y[1] + 1, img_x[0]:img_x[1] + 1] = \
-                        self.kernel[g_y[0]:g_y[1] + 1, g_x[0]:g_x[1] + 1]
+            if kps_weights[kp_id] > 0.5:
+                # 将高斯核有效区域复制到heatmap对应区域
+                heatmap[kp_id][img_y[0]:img_y[1] + 1, img_x[0]:img_x[1] + 1] = \
+                    self.kernel[g_y[0]:g_y[1] + 1, g_x[0]:g_x[1] + 1]
 
-            if self.use_kps_weights:
-                kps_weights = np.multiply(kps_weights, self.kps_weights)
+        if self.use_kps_weights:
+            kps_weights = np.multiply(kps_weights, self.kps_weights)
+        if self.combine_keypoints:
+            heatmap = merge_heatmaps(heatmap[np.newaxis, :, :, :], kps_weights, self.combined_keypoint_indexes)
+            heatmap = np.squeeze(heatmap, axis=0)
+            new_kps_weights = np.zeros(len(self.combined_keypoint_indexes), dtype=np.float32)
+            for heatmap_id, kps_idxs in enumerate(self.combined_keypoint_indexes):
+                new_kps_weights[heatmap_id] = kps_weights[kps_idxs].sum()
+            kps_weights = new_kps_weights
 
-        
         
         # # 如果要求组合关键点，计算组合热力图和权重
         # if self.combine_keypoints and self.combined_keypoint_indexes is not None:
@@ -571,29 +604,32 @@ class KeypointToHeatMap(object):
         #     # 更新heatmap为组合后的heatmap
         #     # old_heatmap = heatmap
         #     # old_kps_weights = kps_weights
-        else:
-            combined_heatmap = np.zeros((len(self.combined_keypoint_indexes), self.heatmap_hw[0], self.heatmap_hw[1]), dtype=np.float32)
-            new_kps_weights = np.zeros(len(self.combined_keypoint_indexes), dtype=np.float32)
-            for pair_id, (kp_id1, kp_id2) in enumerate(self.skeleton):
-                # 确保关键点索引在范围内
-                if kps_weights[kp_id1] == 0 or kps_weights[kp_id2]==0:
-                    continue
-                pt1 = heatmap_kps[kp_id1]
-                pt2 = heatmap_kps[kp_id2]
-                # 在combined_heatmap中为每对关键点绘制直线
-                for heatmap_id in self.pair2groups[(kp_id1,kp_id2)]:
-                    # embed()
-                    combined_heatmap[heatmap_id] = draw_line_heatmap(combined_heatmap[heatmap_id], pt1, pt2,
-                                                                    kps_weights[kp_id1],kps_weights[kp_id2],self.kernel_radius,self.kernel,
-                                                                    self.heatmap_hw)
-                    new_kps_weights[heatmap_id] += (kps_weights[kp_id1] + kps_weights[kp_id2]) / 2
-            for heatmap_id in range(len(new_kps_weights)):
-                pair_count = self.pair_count[heatmap_id]  # self.pair_count记录了每组中包含的关键点对数量
-                if pair_count > 0:
-                    new_kps_weights[heatmap_id] /= pair_count
-            # 更新heatmap为组合后的heatmap，此时heatmap中包含了关键点连线的热度信息
-            heatmap = combined_heatmap
-            kps_weights = new_kps_weights
+        # else:
+
+            
+
+            # combined_heatmap = np.zeros((len(self.combined_keypoint_indexes), self.heatmap_hw[0], self.heatmap_hw[1]), dtype=np.float32)
+            # new_kps_weights = np.zeros(len(self.combined_keypoint_indexes), dtype=np.float32)
+            # for pair_id, (kp_id1, kp_id2) in enumerate(self.skeleton):
+            #     # 确保关键点索引在范围内
+            #     if kps_weights[kp_id1] == 0 or kps_weights[kp_id2]==0:
+            #         continue
+            #     pt1 = heatmap_kps[kp_id1]
+            #     pt2 = heatmap_kps[kp_id2]
+            #     # 在combined_heatmap中为每对关键点绘制直线
+            #     for heatmap_id in self.pair2groups[(kp_id1,kp_id2)]:
+            #         # embed()
+            #         combined_heatmap[heatmap_id] = draw_line_heatmap(combined_heatmap[heatmap_id], pt1, pt2,
+            #                                                         kps_weights[kp_id1],kps_weights[kp_id2],self.kernel_radius,self.kernel,
+            #                                                         self.heatmap_hw)
+            #         new_kps_weights[heatmap_id] += (kps_weights[kp_id1] + kps_weights[kp_id2]) / 2
+            # for heatmap_id in range(len(new_kps_weights)):
+            #     pair_count = self.pair_count[heatmap_id]  # self.pair_count记录了每组中包含的关键点对数量
+            #     if pair_count > 0:
+            #         new_kps_weights[heatmap_id] /= pair_count
+            # # 更新heatmap为组合后的heatmap，此时heatmap中包含了关键点连线的热度信息
+            # heatmap = combined_heatmap
+            # kps_weights = new_kps_weights
 
                 
 
