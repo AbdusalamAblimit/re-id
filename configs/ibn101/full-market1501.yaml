@@ -2,7 +2,7 @@ model:
   neck: bnneck
   _global:
     feature_dim: 2048
-  backbone: ibn50
+  backbone: ibn101
   
   local:
     hrnet:
@@ -18,8 +18,8 @@ model:
 
 dataset:
   root: '/media/data/dataset'
-  dir: 'MSMT17_V1'
-  name: 'MSMT17'
+  dir: 'Market-1501-v15.09.15'
+  name: 'Market1501'
 
 random_seed: 1127
 
@@ -27,7 +27,7 @@ width: 192
 height: 256 
 
 train:
-  num_classes: 1041
+  num_classes: 751
   batch:
     p: 16
     k: 4
@@ -80,7 +80,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: ibn50-full-msmt17
+name: ibn101-full-market1501
 
 output_root_dir: outputs
 

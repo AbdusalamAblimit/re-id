@@ -302,7 +302,7 @@ def build_resnet_backbone(depth = '50x'):
 
     # fmt: off
     pretrain      = True
-    pretrain_path = 'resnet101_ibn_a-59ea0ac6.pth'
+    pretrain_path = 'resnet50_ibn_a-59ea0ac6.pth'
     last_stride   = 1
     bn_norm       = 'BN'
     with_ibn      = True
@@ -331,6 +331,10 @@ def build_resnet_backbone(depth = '50x'):
         '101x': Bottleneck
     }[depth]
 
+    if depth == '50x':
+        pretrain_path = "./resnet50_ibn_a-d9d0bb7b.pth"
+    elif depth=="101x":
+        pretrain_path = "./resnet101_ibn_a-59ea0ac6.pth"
     model = ResNet(last_stride, bn_norm, with_ibn, with_se, with_nl, block,
                    num_blocks_per_stage, nl_layers_per_stage)
     

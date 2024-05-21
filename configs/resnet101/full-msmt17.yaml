@@ -2,7 +2,7 @@ model:
   neck: bnneck
   _global:
     feature_dim: 2048
-  backbone: ibn50
+  backbone: resnet101
   
   local:
     hrnet:
@@ -80,7 +80,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: ibn50-full-msmt17
+name: resnet101-full-msmt17
 
 output_root_dir: outputs
 

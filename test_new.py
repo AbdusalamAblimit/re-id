@@ -134,6 +134,7 @@ class R1_mAP(Metric):
 
 def test(model, query_loader, gallery_loader,tested_feature,cfg):
     model.eval()  # 确保模型处于评估模式
+    # model = model.to('cpu')
     logger.info(f'Testing on {tested_feature} feature.')
     r1_map_evaluator = R1_mAP(num_query=len(query_loader.dataset), max_rank=50, feat_norm='yes',metric='cosine')
     with torch.no_grad():
@@ -141,6 +142,9 @@ def test(model, query_loader, gallery_loader,tested_feature,cfg):
             imgs, pids, camids = data
             imgs = imgs.to('cuda:0')
             gf,lf = model(imgs)  # 确保模型输出与R1_mAP中的更新逻辑相匹配
+            gf = gf.to('cpu')
+            lf = lf.to('cpu')
+            imgs = imgs.to('cpu')
             if tested_feature == 'global':
                 r1_map_evaluator.update((gf, pids, camids))
             elif tested_feature =='local':
@@ -154,6 +158,9 @@ def test(model, query_loader, gallery_loader,tested_feature,cfg):
             imgs, pids, camids = data
             imgs = imgs.to('cuda:0')
             gf,lf = model(imgs)
+            gf = gf.to('cpu')
+            lf = lf.to('cpu')
+            imgs = imgs.to('cpu')
             if tested_feature == 'global':
                 r1_map_evaluator.update((gf, pids, camids))
             elif tested_feature =='local':

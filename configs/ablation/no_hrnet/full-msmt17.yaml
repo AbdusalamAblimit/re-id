@@ -2,7 +2,7 @@ model:
   neck: bnneck
   _global:
     feature_dim: 2048
-  backbone: ibn50
+  backbone: resnet50
   
   local:
     hrnet:
@@ -12,6 +12,7 @@ model:
         path: HRNet/original_weights/hrnet-28c-line.pth
       num_joints: 28
   aligned: true
+  no_hrnet: true
   metric: cosine # euclidean or cosine
 
     
@@ -80,7 +81,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: ibn50-full-msmt17
+name: albation-no-hrnet-msmt17
 
 output_root_dir: outputs
 

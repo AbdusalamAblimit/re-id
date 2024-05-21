@@ -153,11 +153,13 @@ def main(cfg):
 
 
     if cfg.tensorboard.enabled:
+    # if True:
         tb_writer = SummaryWriter(os.path.join(cfg.output_dir,'tb'))
         cfg.tb_writer = tb_writer
         sample = torch.rand([1,3,height,width],device = device)
         tb_writer.add_graph(model, sample)
     sample_images = read_sample_images('./sample_images',transform_test,device)
+    # model.draw_feature_to_tensorboard(sample_images,tb_writer,'samples')
     # embed()
     # test(model,query_loader,gallery_loader,cfg)
     # test_concat(model,query_loader,gallery_loader,cfg)

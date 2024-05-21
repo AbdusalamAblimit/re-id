@@ -6,11 +6,11 @@
             "type": "debugpy",
             "python": "/home/server/miniconda3/envs/abu-reid/bin/python3",
             "request": "launch",
-            "program": "train_new.py",
+            "program": "train.py",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "--config","configs/all-losses-28c-line.yaml"
+                "--config","configs/ibn101/full.yaml"
             ]
         }
     ]

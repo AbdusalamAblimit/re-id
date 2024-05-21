@@ -38,8 +38,9 @@ class UnNormalize:
         x=(x*self.std)+self.mean
         return torch.clip(x,0,None)
 
-
-
+import matplotlib.cm as cm
+import torch
+import torchvision.utils as vutils
 def save_combined_features_to_tensorboard(x, feature_map, writer, tag, unnorm=None):
     """
     将原始图像和所有特征图通道合并为一张大图，在垂直方向上拼接，并输出到TensorBoard。
@@ -53,24 +54,25 @@ def save_combined_features_to_tensorboard(x, feature_map, writer, tag, unnorm=No
         x = unnorm(x)
     x = torch.nn.functional.interpolate(x, size=feature_map.shape[2:], mode='bilinear', align_corners=False)
 
-    # 将所有样本的原始图像和特征图排列成bs行(1+c)列的布局
+    # 使用彩色映射
+    cmap = cm.get_cmap('jet')  # 选择热力图颜色映射，例如 'jet', 'viridis', 'hot' 等
+
     rows = []
-    for i in range(x.size(0)):  # 遍历每个样本
-        row_imgs = [x[i]]  # 开始每行的图片列表，首先加入原始图像
-        for j in range(feature_map.size(1)):  # 遍历每个特征图
-            fmap = feature_map[i, j].unsqueeze(0)  # 将特征图扩展到3D
-            fmap3 = torch.cat([fmap, fmap, fmap], dim=0)  # 转换为三通道
-            row_imgs.append(fmap3)
-        rows.append(torch.cat(row_imgs, dim=2))  # 将一行中的所有图片横向拼接
+    for i in range(x.size(0)):
+        row_imgs = [x[i].cpu()]  # 加入原始图像
+        for j in range(feature_map.size(1)):
+            fmap = feature_map[i, j].unsqueeze(0).unsqueeze(0)  # 添加batch和channel维度
+            fmap = torch.nn.functional.interpolate(fmap, size=x.shape[2:], mode='bilinear', align_corners=False)
+            fmap_normalized = (fmap - fmap.min()) / (fmap.max() - fmap.min())  # 归一化
+            fmap_colored = cmap(fmap_normalized.squeeze().cpu().detach().numpy())  # 应用颜色映射
+            fmap_colored = torch.from_numpy(fmap_colored[:, :, :3]).permute(2, 0, 1)  # 转换为torch tensor并取前三个通道
+            row_imgs.append(fmap_colored)
+        rows.append(torch.cat(row_imgs, dim=2))
 
-    # 将所有行纵向拼接
     full_grid = torch.cat(rows, dim=1)
-    # 使用make_grid调整布局，此时因为已经手动拼接，所以只需要一个大的grid即可
     grid = vutils.make_grid(full_grid.unsqueeze(0), scale_each=True, pad_value=1)
-    
-    # 输出到TensorBoard
-    writer.add_image(tag, grid, global_step=0)
 
+    writer.add_image(tag, grid, global_step=0)
 
 
 def save_combined_features(x, feature_map, base_dir='debug/feature_map'):

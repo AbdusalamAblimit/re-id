@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from IPython import embed
 from HRNet.model.hrnet import HighResolutionNet
-from torchvision.models.resnet import resnet50, resnet34, resnet18
+from torchvision.models.resnet import resnet50, resnet34, resnet18,resnet101
 from loguru import logger
 from utils import save_combined_features,save_combined_features_to_tensorboard,UnNormalize
 
@@ -321,18 +321,34 @@ class ReID(nn.Module):
         self.neck = cfg.model.neck
         self.num_classes = cfg.train.num_classes
 
+        no_hrnet = True if hasattr(cfg.model,"no_hrnet") and cfg.model.no_hrnet else False
+        no_channel = True if hasattr(cfg.model,"no_channel") and cfg.model.chennel else False
+        self.no_hrnet = no_hrnet
+        self.no_channel = no_channel
+
+        logger.info(f"no_hrnet:{no_hrnet}")
+        logger.info(f"no_channel:{no_channel}")
         if cfg.model.aligned:
-            self.hrnet = self._init_hrnet(cfg.model.local.hrnet)
-            self.heatmap_channel_attention = ChannelAttentionModule(num_channels=256) 
-            self.color_channel_attention = ChannelAttentionModule(num_channels=256) 
-            self.combined_channel_attention = ChannelAttentionModule(num_channels=256) 
+            if no_hrnet:
+                self.hrnet = self._init_color_feature_extractor()
+            else:
+                self.hrnet = self._init_hrnet(cfg.model.local.hrnet)
+            if no_channel:
+                self.heatmap_channel_attention = FeatureTransform(256, 256)
+                self.heatmap_channel_attention = FeatureTransform(256, 256)
+                self.heatmap_channel_attention = FeatureTransform(256, 256)
+            else:
+                self.heatmap_channel_attention = ChannelAttentionModule(num_channels=256) 
+                self.color_channel_attention = ChannelAttentionModule(num_channels=256) 
+                self.combined_channel_attention = ChannelAttentionModule(num_channels=256) 
+                
             # 定义处理HRNet heatmap的卷积层
             self.heatmap_transform = FeatureTransform(cfg.model.local.hrnet.num_joints, 256)
             # 定义合并特征后的处理层
             self.combined_features_transform = FeatureTransform(256, 256)
   
             self.local_net = self._init_resnet_continued()
-            
+
 
         self.base = self._init_color_feature_extractor()
         self.global_net = self._init_resnet_continued()
@@ -406,6 +422,10 @@ class ReID(nn.Module):
         for param in self.global_net.parameters():
             param.requires_grad = False
         if self.cfg.model.aligned:
+            if self.no_hrnet:
+                for param in self.hrnet.parameters():
+                    param.requires_grad = False
+
             for param in self.local_net.parameters():
                 param.requires_grad = False
     def unfreeze_backbone(self):
@@ -415,6 +435,9 @@ class ReID(nn.Module):
         for param in self.global_net.parameters():
                 param.requires_grad = True
         if self.cfg.model.aligned:
+            if self.no_hrnet:
+                for param in self.hrnet.parameters():
+                    param.requires_grad = True
             for param in self.local_net.parameters():
                 param.requires_grad = True
 
@@ -423,6 +446,10 @@ class ReID(nn.Module):
         if backbone == 'resnet50':
         # 初始化ResNet50并保留到layer1的部分
             model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
+            layers = list(model.children())[:5]  # 包括layer1
+            model = nn.Sequential(*layers)
+        elif backbone == 'resnet101':
+            model = resnet101(weights = torchvision.models.ResNet101_Weights.DEFAULT)
             layers = list(model.children())[:5]  # 包括layer1
             model = nn.Sequential(*layers)
         elif backbone == 'ibn50':
@@ -439,6 +466,10 @@ class ReID(nn.Module):
         backbone = self.cfg.model.backbone
         if backbone == 'resnet50':
             model = resnet50(weights = torchvision.models.ResNet50_Weights.DEFAULT)
+            layers = list(model.children())[5:-2]
+            model = nn.Sequential(*layers)
+        elif backbone == 'resnet101':
+            model = resnet101(weights = torchvision.models.ResNet101_Weights.DEFAULT)
             layers = list(model.children())[5:-2]
             model = nn.Sequential(*layers)
         elif backbone == 'ibn50':

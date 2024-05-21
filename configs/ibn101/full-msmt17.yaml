@@ -2,7 +2,7 @@ model:
   neck: bnneck
   _global:
     feature_dim: 2048
-  backbone: ibn50
+  backbone: ibn101
   
   local:
     hrnet:
@@ -20,6 +20,7 @@ dataset:
   root: '/media/data/dataset'
   dir: 'MSMT17_V1'
   name: 'MSMT17'
+
 
 random_seed: 1127
 
@@ -72,7 +73,7 @@ train:
 test:
   pin_memory: true
   num_workers: 4
-  batch_size: 16
+  batch_size: 4
   ranks: [1,3,5,10,20]
   reranking: false
   features: ['concat']
@@ -80,7 +81,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: ibn50-full-msmt17
+name: ibn101-full-msmt17
 
 output_root_dir: outputs
 
