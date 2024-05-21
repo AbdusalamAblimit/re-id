@@ -331,19 +331,21 @@ class ReID(nn.Module):
         if cfg.model.aligned:
             if no_hrnet:
                 self.hrnet = self._init_color_feature_extractor()
+                self.heatmap_transform = FeatureTransform(256, 256)
             else:
                 self.hrnet = self._init_hrnet(cfg.model.local.hrnet)
+                self.heatmap_transform = FeatureTransform(cfg.model.local.hrnet.num_joints, 256)
             if no_channel:
                 self.heatmap_channel_attention = FeatureTransform(256, 256)
-                self.heatmap_channel_attention = FeatureTransform(256, 256)
-                self.heatmap_channel_attention = FeatureTransform(256, 256)
+                self.color_channel_attention = FeatureTransform(256, 256)
+                self.combined_channel_attention = FeatureTransform(256, 256)
             else:
                 self.heatmap_channel_attention = ChannelAttentionModule(num_channels=256) 
                 self.color_channel_attention = ChannelAttentionModule(num_channels=256) 
                 self.combined_channel_attention = ChannelAttentionModule(num_channels=256) 
                 
             # 定义处理HRNet heatmap的卷积层
-            self.heatmap_transform = FeatureTransform(cfg.model.local.hrnet.num_joints, 256)
+            
             # 定义合并特征后的处理层
             self.combined_features_transform = FeatureTransform(256, 256)
   
