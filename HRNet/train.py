@@ -21,7 +21,7 @@ def create_model(num_joints, load_pretrain_weights=True):
         # 载入预训练模型权重
         # 链接:https://pan.baidu.com/s/1Lu6mMAWfm_8GGykttFMpVw 提取码:f43o
         # weights_dict = torch.load("./original_weights/imagenet-w32.pth", map_location='cpu')
-        weights_dict = torch.load("pose_hrnet_w32_256x192.pth", map_location='cpu')
+        weights_dict = torch.load("original_weights/hrnet-28c-line.pth", map_location='cpu')
         for k in list(weights_dict.keys()):
             # 如果载入的是imagenet权重，就删除无用权重
             if ("head" in k) or ("fc" in k):
@@ -142,77 +142,103 @@ def main(args):
     # 用来保存coco_info的文件
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
-    with open(args.keypoints_path, "r") as f:
-        person_kps_info = json.load(f)
+    # with open(args.keypoints_path, "r") as f:
+    #     person_kps_info = json.load(f)
 
-    fixed_size = args.fixed_size
-    heatmap_hw = (args.fixed_size[0] // 4, args.fixed_size[1] // 4)
-    kps_weights = np.array(person_kps_info["kps_weights"],
-                           dtype=np.float32).reshape((args.num_joints,))
+    # fixed_size = args.fixed_size
+    # heatmap_hw = (args.fixed_size[0] // 4, args.fixed_size[1] // 4)
+    # kps_weights = np.array(person_kps_info["kps_weights"],
+    #                        dtype=np.float32).reshape((args.num_joints,))
     
-    combined_keypoint_indexes = person_kps_info["combined_keypoint_indexes"]
-    skeleton= person_kps_info["skeleton"]
-    if(args.combine_keypoints):
-        args.num_joints = len(combined_keypoint_indexes)
+    # combined_keypoint_indexes = person_kps_info["combined_keypoint_indexes"]
+    # skeleton= person_kps_info["skeleton"]
+    # if(args.combine_keypoints):
+    #     args.num_joints = len(combined_keypoint_indexes)
 
-    data_transform = {
-        "train": transforms.Compose([
-            transforms.HalfBody(0.3, person_kps_info["upper_body_ids"], person_kps_info["lower_body_ids"]),
-            transforms.AffineTransform(scale=(0.65, 1.35), rotation=(-45, 45), fixed_size=fixed_size),
-            transforms.RandomHorizontalFlip(0.5, person_kps_info["flip_pairs"]),
-            transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
-                                         combine_keypoints=args.combine_keypoints,skeleton = skeleton,
-                                         combined_keypoint_indexes = combined_keypoint_indexes),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ]),
-        "val": transforms.Compose([
-            transforms.AffineTransform(scale=(1.25, 1.25), fixed_size=fixed_size),
-            transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
-                                         combine_keypoints=args.combine_keypoints,skeleton = skeleton,
-                                         combined_keypoint_indexes = combined_keypoint_indexes),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-    }
+    # data_transform = {
+    #     "train": transforms.Compose([
+    #         transforms.HalfBody(0.3, person_kps_info["upper_body_ids"], person_kps_info["lower_body_ids"]),
+    #         transforms.AffineTransform(scale=(0.65, 1.35), rotation=(-45, 45), fixed_size=fixed_size),
+    #         transforms.RandomHorizontalFlip(0.5, person_kps_info["flip_pairs"]),
+    #         transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
+    #                                      combine_keypoints=args.combine_keypoints,skeleton = skeleton,
+    #                                      combined_keypoint_indexes = combined_keypoint_indexes),
+    #         transforms.ToTensor(),
+    #         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    #     ]),
+    #     "val": transforms.Compose([
+    #         transforms.AffineTransform(scale=(1.25, 1.25), fixed_size=fixed_size),
+    #         transforms.KeypointToHeatMap(heatmap_hw=heatmap_hw, gaussian_sigma=2, keypoints_weights=kps_weights,
+    #                                      combine_keypoints=args.combine_keypoints,skeleton = skeleton,
+    #                                      combined_keypoint_indexes = combined_keypoint_indexes),
+    #         transforms.ToTensor(),
+    #         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    #     ])
+    # }
 
-    data_root = args.data_path
+    # data_root = args.data_path
 
-    # load train data set
-    # coco2017 -> annotations -> person_keypoints_train2017.json
-    train_dataset = CocoKeypoint(data_root, "train", transforms=data_transform["train"], fixed_size=args.fixed_size)
+    # # load train data set
+    # # coco2017 -> annotations -> person_keypoints_train2017.json
+    # train_dataset = CocoKeypoint(data_root, "train", transforms=data_transform["train"], fixed_size=args.fixed_size)
 
-    # 注意这里的collate_fn是自定义的，因为读取的数据包括image和targets，不能直接使用默认的方法合成batch
-    batch_size = args.batch_size
-    nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
-    # embed()
-    # nw = 0
-    logger.info('Using %g dataloader workers' % nw)
+    # # 注意这里的collate_fn是自定义的，因为读取的数据包括image和targets，不能直接使用默认的方法合成batch
+    # batch_size = args.batch_size
+    # nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
+    # # embed()
+    # # nw = 0
+    # logger.info('Using %g dataloader workers' % nw)
 
-    train_data_loader = data.DataLoader(train_dataset,
-                                        batch_size=batch_size,
-                                        shuffle=True,
-                                        pin_memory=True,
-                                        num_workers=nw,
-                                        collate_fn=train_dataset.collate_fn)
+    # train_data_loader = data.DataLoader(train_dataset,
+    #                                     batch_size=batch_size,
+    #                                     shuffle=True,
+    #                                     pin_memory=True,
+    #                                     num_workers=nw,
+    #                                     collate_fn=train_dataset.collate_fn)
 
-    # load validation data set
-    # coco2017 -> annotations -> person_keypoints_val2017.json
-    val_dataset = CocoKeypoint(data_root, "val", transforms=data_transform["val"], fixed_size=args.fixed_size,
-                               det_json_path=args.person_det)
-    val_data_loader = data.DataLoader(val_dataset,
-                                      batch_size=batch_size,
-                                      shuffle=False,
-                                      pin_memory=True,
-                                      num_workers=nw,
-                                      collate_fn=val_dataset.collate_fn)
-    eval(val_data_loader)
-    return
+    # # load validation data set
+    # # coco2017 -> annotations -> person_keypoints_val2017.json
+    # val_dataset = CocoKeypoint(data_root, "val", transforms=data_transform["val"], fixed_size=args.fixed_size,
+    #                            det_json_path=args.person_det)
+    # val_data_loader = data.DataLoader(val_dataset,
+    #                                   batch_size=batch_size,
+    #                                   shuffle=False,
+    #                                   pin_memory=True,
+    #                                   num_workers=nw,
+    #                                   collate_fn=val_dataset.collate_fn)
+    # eval(val_data_loader)
+    # return
     # create model
     model = create_model(num_joints=args.num_joints)
     # logger.info(model)
 
     model.to(device)
+    import sys
+    sys.path.append("..")
+    from utils import read_sample_images
+    from save_featrue_map import save_feature_maps
+    class UnNormalize:
+        #restore from T.Normalize
+        #反标准化
+        def __init__(self,mean=(0.485, 0.456, 0.406),std= (0.229, 0.224, 0.225)):
+            self.mean=torch.tensor(mean,device='cuda:0').view((1,-1,1,1))
+            self.std=torch.tensor(std,device='cuda:0').view((1,-1,1,1))
+        def __call__(self,x):
+            x=(x*self.std)+self.mean
+            return torch.clip(x,0,None)
+   
+    from torchvision import transforms as T
+    samples = read_sample_images("sample_images",  T.Compose([
+        T.Resize([256, 192]),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
+    ]),'cuda:0')
+    samples = samples.cuda()
+    model.eval()
+    outputs = model(samples)
+    save_feature_maps(samples,outputs,"./new_samples.png",UnNormalize())
+    return
+
 
     # define optimizer
     params = [p for p in model.parameters() if p.requires_grad]

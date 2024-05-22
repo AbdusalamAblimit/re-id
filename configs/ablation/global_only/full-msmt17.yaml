@@ -80,7 +80,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: albation-global-only-market1501
+name: albation-global-only-msmt17
 
 output_root_dir: outputs
 

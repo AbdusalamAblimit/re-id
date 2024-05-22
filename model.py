@@ -322,7 +322,7 @@ class ReID(nn.Module):
         self.num_classes = cfg.train.num_classes
 
         no_hrnet = True if hasattr(cfg.model,"no_hrnet") and cfg.model.no_hrnet else False
-        no_channel = True if hasattr(cfg.model,"no_channel") and cfg.model.chennel else False
+        no_channel = True if hasattr(cfg.model,"no_channel") and cfg.model.channel else False
         self.no_hrnet = no_hrnet
         self.no_channel = no_channel
 

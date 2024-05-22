@@ -80,7 +80,7 @@ use_gpu: true
 
 use_cudnn: true
 
-name: resnet101-full-market1051
+name: resnet101-full-market1501
 
 output_root_dir: outputs
 
