@@ -3,7 +3,7 @@
 
 import torch
 
-from data_manager import Market1501,MSMT17_V1
+from data_manager import Market1501,MSMT17_V1,OccludedDuke
 from dataset import ImageDataset
 from torchvision import transforms as T
 from torch.utils.data import DataLoader
@@ -71,7 +71,7 @@ def main(cfg):
         T.ToTensor(),
         T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
         # RandomErasing(probability=1.0,mean=[0.485,0.456,0.406])
-        PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
+        # PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
 
     ])
 
@@ -81,7 +81,7 @@ def main(cfg):
         T.ToTensor(),
         T.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]),
         # RandomErasing(probability=1.0,mean=[0.485,0.456,0.406])
-        PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
+        # PassRandomErasing(probability=1.0, mode='pixel', max_count=1, device='cpu')
     ])
 
 
@@ -89,6 +89,8 @@ def main(cfg):
         data = Market1501(cfg.dataset.root, cfg.dataset.dir)
     elif cfg.dataset.name == 'MSMT17':
         data = MSMT17_V1(cfg.dataset.root, cfg.dataset.dir)
+    elif cfg.dataset.name == 'OccludedDuke':
+        data = OccludedDuke(cfg.dataset.root, cfg.dataset.dir)
     train_dataset = ImageDataset(data.train, transform=transform_train)
     query_dataset = ImageDataset(data.query, transform=transform_test)
     gallery_dataset = ImageDataset(data.gallery, transform=transform_test)
@@ -159,6 +161,7 @@ def main(cfg):
         sample = torch.rand([1,3,height,width],device = device)
         tb_writer.add_graph(model, sample)
     sample_images = read_sample_images('./sample_images',transform_test,device)
+    # embed()
     # model.draw_feature_to_tensorboard(sample_images,tb_writer,'samples')
     # embed()
     # test(model,query_loader,gallery_loader,cfg)

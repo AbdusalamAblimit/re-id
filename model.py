@@ -322,7 +322,7 @@ class ReID(nn.Module):
         self.num_classes = cfg.train.num_classes
 
         no_hrnet = True if hasattr(cfg.model,"no_hrnet") and cfg.model.no_hrnet else False
-        no_channel = True if hasattr(cfg.model,"no_channel") and cfg.model.channel else False
+        no_channel = True if hasattr(cfg.model,"no_channel") and cfg.model.no_channel else False
         self.no_hrnet = no_hrnet
         self.no_channel = no_channel
 
@@ -347,7 +347,10 @@ class ReID(nn.Module):
             # 定义处理HRNet heatmap的卷积层
             
             # 定义合并特征后的处理层
-            self.combined_features_transform = FeatureTransform(256, 256)
+            if (not hasattr(self.cfg.model,"fusion")) or self.cfg.model.fusion == 'mul':
+                self.combined_features_transform = FeatureTransform(256, 256)
+            elif self.cfg.model.fusion == 'concat':
+                self.combined_features_transform = FeatureTransform(512, 256)
   
             self.local_net = self._init_resnet_continued()
 
@@ -394,7 +397,11 @@ class ReID(nn.Module):
             attention_heatmap = self.heatmap_channel_attention(heatmap)
             attention_color = self.color_channel_attention(f)
             # 合并特征
-            combined_features = attention_color * attention_heatmap
+            if (not hasattr(self.cfg.model,"fusion")) or self.cfg.model.fusion == 'mul':
+                combined_features = attention_color * attention_heatmap
+            elif self.cfg.model.fusion == 'concat':
+                combined_features = torch.cat((attention_color, attention_heatmap), dim=1)
+
             combined_features = self.combined_features_transform(combined_features)
             # 继续通过ResNet50的剩余部分
             lf = self.local_net(combined_features)
